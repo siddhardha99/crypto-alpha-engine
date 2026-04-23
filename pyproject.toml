@@ -45,6 +45,11 @@ dev = [
     "black>=24.3",
     "mkdocs>=1.5",
     "mkdocs-material>=9.5",
+    # pandas-stubs is needed for mypy --strict (SPEC §15) to type-check any
+    # module that imports pandas. Not listed in SPEC §19 because SPEC's dev
+    # list predates the strict-mypy-on-pandas-code reality; added here as a
+    # dev-only type-stubs dep with no runtime impact.
+    "pandas-stubs>=2.2",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -75,10 +80,12 @@ select = [
     "SIM",  # flake8-simplify
 ]
 ignore = [
-    # SPEC §13 and CLAUDE.md Pitfall 7 mandate specific exception names
-    # like `LookAheadDetected` and `DataSchemaViolation`. Those names are
-    # deliberate and part of the public contract — we don't rename them
-    # to end in `Error`.
+    # N818 would require every exception to end in `Error`. We deliberately
+    # use descriptive verb/noun names like `LookAheadDetected` and
+    # `DataSchemaViolation` — per SPEC §13 and CLAUDE.md Pitfall 7, these
+    # names communicate *what happened* better than a generic `-Error`
+    # suffix would, and they're part of the public contract that external
+    # code catches against. This is an intentional, considered deviation.
     "N818",
 ]
 

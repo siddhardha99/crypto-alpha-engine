@@ -38,9 +38,11 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Data — downloaded datasets live outside the repo.
-# Test fixtures in tests/fixtures/ are explicitly tracked.
-data/
+# Downloaded datasets live outside the repo — ignore the top-level data/
+# directory only. The package tree has its own crypto_alpha_engine/data/
+# module which must stay tracked, hence the leading slash (anchors to
+# repo root). Test fixtures in tests/fixtures/ are explicitly tracked.
+/data/
 !tests/fixtures/
 
 # Experiment ledger (populated at runtime; never committed)
