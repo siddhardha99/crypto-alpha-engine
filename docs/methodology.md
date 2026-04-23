@@ -13,6 +13,8 @@ one.
 - [What's deliberately not built-in](#whats-deliberately-not-built-in)
 - [Paper-example tests: external validation over self-consistency](#paper-example-tests-external-validation-over-self-consistency)
 - [Why two causality layers](#why-two-causality-layers)
+- [Positive encoding plus defensive trap](#positive-encoding-plus-defensive-trap)
+- [Python's bool-is-int footgun](#pythons-bool-is-int-footgun)
 
 *(More sections will land as later phases are implemented.)*
 
@@ -257,3 +259,68 @@ run) and catches the mistakes, lies, and emergent leaks Layer 1
 can't see. Running both is the practical cost of a non-negotiable
 principle: **causality is sacred, and trust-but-verify is how you
 keep it sacred when the people declaring trust are human.**
+
+## Positive encoding plus defensive trap
+
+When a serializer has to handle values that are usually valid but
+occasionally *out-of-band* — ``inf`` / ``-inf`` / ``nan`` floats
+escaping from a metric like ``profit_factor``, null bytes in a
+string field, etc. — the most robust design layers two mechanisms:
+
+1. **Positive encoding.** A deliberate mechanism that converts the
+   out-of-band value to a legal in-band representation. In
+   ``crypto_alpha_engine.ledger.ledger``, numeric ``BacktestResult``
+   fields are walked at write time, and any ``inf`` / ``-inf`` /
+   ``nan`` float is replaced with the string sentinel ``"inf"`` /
+   ``"-inf"`` / ``"nan"``. Deserialization reverses the mapping.
+   Round-trip tests pin byte equality through the encoder +
+   decoder.
+2. **Defensive trap.** A sanity check that fails loud if anything
+   out-of-band slipped past the positive encoder. For the ledger
+   that's ``json.dumps(allow_nan=False)`` — the JSON writer
+   itself refuses to emit ``NaN`` or ``Infinity`` tokens, so if
+   the sentinel encoder missed a field (a new ``BacktestResult``
+   field added without updating the field-type taxonomy, say) the
+   write fails at the file boundary with a clear Python exception,
+   not later with a corrupt line that reads back wrong.
+
+The positive mechanism handles the expected case; the defensive
+trap catches the mechanism failing. The cost is low — one extra
+flag on ``json.dumps`` — and the upside is high: a class of bugs
+(silent line-by-line ledger corruption) can't reach disk because
+the last step before the write refuses to accept them.
+
+The pattern generalises beyond JSON. Any serialization where some
+values have a known escape route but might sneak in through a new
+field, a changed dependency, or a future refactor benefits from
+layering the positive mechanism with a validator at the boundary.
+Rely on either alone and you get either silent corruption (positive
+only, mechanism fails unseen) or loud-but-constant errors (defensive
+only, every legitimate out-of-band value is rejected).
+
+## Python's bool-is-int footgun
+
+``isinstance(True, int)`` returns ``True`` in Python —
+``bool`` is a subclass of ``int``. Any code that introspects
+integer-valued arguments (counting rolling windows, validating
+numeric thresholds, summing arity) must exclude booleans explicitly,
+or it will silently treat ``True`` / ``False`` as 1 / 0.
+
+The fix, used throughout the engine (e.g.,
+``crypto_alpha_engine.ledger.duplicate._max_int_heuristic``):
+
+```python
+if isinstance(value, int) and not isinstance(value, bool):
+    ...
+```
+
+Alternative: ``type(value) is int`` — strict type identity, no
+subclass relationship. Slightly cheaper and more explicit, but
+fails if a caller passes a ``numpy.int64`` (which is also
+commonly fine). The ``isinstance + not isinstance`` form is the
+safer default for user-supplied input.
+
+This matters most when ``True``-as-1 would silently pass a
+type or range check but produce a meaningless semantic result
+downstream. Flag at the boundary; there's no recovery once bool
+has been treated as a window size.
