@@ -193,14 +193,14 @@ crypto-alpha-engine/
 
 | Dataset | Source | Frequency | History | Format |
 |---------|--------|-----------|---------|--------|
-| BTC/USDT OHLCV | Binance (ccxt) | 1h | 2017-01-01 to now | parquet |
-| ETH/USDT OHLCV | Binance (ccxt) | 1h | 2017-08-01 to now | parquet |
-| BTC/USDT OHLCV (daily) | Binance (ccxt) | 1d | 2017-01-01 to now | parquet |
-| ETH/USDT OHLCV (daily) | Binance (ccxt) | 1d | 2017-08-01 to now | parquet |
-| BTC/USDT:USDT funding | Binance Futures | 8h (forward-fill to 1h) | 2019-09-01 to now | parquet |
-| ETH/USDT:USDT funding | Binance Futures | 8h (forward-fill to 1h) | 2019-09-01 to now | parquet |
-| BTC Open Interest | Binance Futures | 1h | 2020-01-01 to now | parquet |
-| ETH Open Interest | Binance Futures | 1h | 2020-01-01 to now | parquet |
+| BTC/USD OHLCV | Coinbase | 1h | 2017-01-01 to now | parquet |
+| ETH/USD OHLCV | Coinbase | 1h | 2017-08-01 to now | parquet |
+| BTC/USD OHLCV (daily) | Coinbase | 1d | 2017-01-01 to now | parquet |
+| ETH/USD OHLCV (daily) | Coinbase | 1d | 2017-08-01 to now | parquet |
+| BTC perp funding rate | BitMEX (`BTC/USD:BTC`) | 8h (forward-fill to 1h) | 2016-05-14 to now | parquet |
+| ETH perp funding rate | BitMEX (`ETH/USD:BTC`) | 8h (forward-fill to 1h) | 2018-08-02 to now | parquet |
+| BTC perp open interest | Coinglass (aggregated) | 1h | API's available range | parquet |
+| ETH perp open interest | Coinglass (aggregated) | 1h | API's available range | parquet |
 | Fear & Greed Index | Alternative.me | 1d | 2018-02-01 to now | parquet |
 | BTC active addresses | Blockchain.com | 1d | 2009 to now | parquet |
 | BTC hashrate | Blockchain.com | 1d | 2009 to now | parquet |
@@ -211,6 +211,32 @@ crypto-alpha-engine/
 | CryptoPanic news | CryptoPanic API | daily batch | 2025 onwards (real-time) | parquet |
 
 **Total disk footprint:** Under 50 MB. Easily fits in git-lfs or just a cloud bucket.
+
+**Notes on the table:**
+
+* **Perp = perpetual futures contract.** Our built-in perp source is
+  BitMEX, which offers inverse (coin-margined) perps. The ccxt symbol
+  form is `BTC/USD:BTC`, where `:BTC` indicates BTC-margining. We treat
+  funding rates as a **signal**, not a PnL source, so the inverse-vs-
+  linear distinction is orthogonal to factor design (see
+  `docs/methodology.md`).
+* **Coinglass open interest** aggregates OI across multiple exchanges,
+  a closer proxy to "the market's aggregate OI" than any single venue.
+  Requires a free API key in `COINGLASS_API_KEY`. Missing key → the OI
+  source is silently skipped at download time, the same flexibility
+  applied to `CRYPTOPANIC_API_KEY`.
+* **"API's available range" for OI** is left open because Coinglass's
+  free-tier history window changes over time. The downloader pulls
+  everything the API offers on each run; it never invents coverage it
+  doesn't have.
+
+**Why we deliberately avoid Binance, Bybit, and Binance.US.** Binance
+blocks US IPs with HTTP 451; Bybit blocks via CloudFront from several
+regions (confirmed at Phase-2 close); Binance.US lists a small subset
+of pairs with shallow history. None are reliable infrastructure for an
+open-source project where contributors and CI jobs run from many
+countries. See `docs/methodology.md` for the selection criteria
+applied to new exchanges.
 
 ### Data splits (enforced in `data/splits.py`)
 
@@ -246,6 +272,67 @@ class OHLCVSchema(pa.DataFrameModel):
     @pa.check("low")
     def low_le_open_close(cls, series, df): ...
 ```
+
+### 5.1 Data sources as a plugin layer
+
+Every dataset above is produced by a **data source** that implements a
+single Protocol (`crypto_alpha_engine.data.protocol.DataSource`). The
+engine knows nothing about specific exchanges or APIs — it queries the
+registry by *data type* (`OHLCV`, `FUNDING`, `OPEN_INTEREST`, `ONCHAIN`,
+`SENTIMENT`, `MACRO`) and *symbol*, and dispatches to whichever source
+is registered.
+
+**The Protocol:**
+
+```python
+class DataSource(Protocol):
+    name: str                    # unique identifier, e.g. "coinbase_spot"
+    data_type: DataType          # OHLCV, FUNDING, ONCHAIN, ...
+    symbols: list[str]           # supported symbols
+    def fetch(
+        self,
+        symbol: str,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp | None = None,
+        freq: str = "1h",
+    ) -> pd.DataFrame: ...
+    def earliest_available(self, symbol: str) -> pd.Timestamp: ...
+```
+
+**Schema ownership.** The engine defines one canonical Pandera schema
+per `DataType`. Every source's `fetch()` output must conform; non-
+conforming DataFrames are rejected at publish time via the same
+`quarantine/` mechanism documented above. A source MAY add its own
+stricter sanity checks (e.g. Fear & Greed's 0-100 bound), but the
+on-disk contract is the canonical schema.
+
+**Registry API** (`crypto_alpha_engine.data.registry`):
+
+* `register_source(source)` — adds a source; duplicate names raise.
+* `get_source(name)` — fetch by name.
+* `list_sources_for(data_type, symbol=None)` — all matching sources,
+  registration order preserved.
+* `default_for(data_type, symbol)` — the first registered source for
+  that data_type+symbol pair.
+
+Built-in sources auto-register when `crypto_alpha_engine.data.sources`
+is imported. External sources register programmatically at the start
+of the user's script — no engine code change required.
+
+**On-disk layout reflects source provenance.** Each source writes to
+`data/<data_type>/<source_name>/<symbol>_<interval>.parquet`, and every
+parquet carries a `source_name` entry in its file-level metadata. The
+loader verifies both. This is the architectural expression of the rule
+that **two sources must never share a file**: if a fallback kicks in, it
+writes to its own path, not on top of the primary's file.
+
+**Reproducibility.** `BacktestResult.data_version` (§8) combines file
+hashes with source names, so a run against `my_sentiment_v2` is
+distinguishable in the ledger from `my_sentiment_v3` even with an
+identical factor AST.
+
+See `docs/adding_custom_sources.md` for a worked example.
 
 ---
 

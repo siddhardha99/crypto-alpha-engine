@@ -109,6 +109,11 @@ module = [
     "vectorbt.*",
     "yfinance.*",
     "pandera.*",
+    # pyarrow ships partial py.typed stubs but many functions (read_schema,
+    # write_table, Table.from_pandas) come back as Any / untyped. Silence
+    # the noise here rather than scatter # type: ignore throughout the
+    # data layer.
+    "pyarrow.*",
 ]
 ignore_missing_imports = true
 

@@ -261,6 +261,10 @@ class BacktestResult:
     factor_id: str
     factor_name: str
     run_timestamp: datetime
+    # TODO(Phase-6): Format spec'd in §5.1 — combine file hashes with
+    # source_names so runs against "my_sentiment_v2" vs "my_sentiment_v3"
+    # are distinguishable in the ledger. Currently: placeholder hash.
+    # Full implementation in backtest/engine.py during Phase 6.
     data_version: str
 
     # --- Headline ---
