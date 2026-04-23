@@ -40,7 +40,7 @@ crypto-market strategies without accidentally fitting the future.
 ## Install
 
 ```bash
-[git clone https://github.com/YOUR-ORG/crypto-alpha-engine.git](https://github.com/siddhardha99/crypto-alpha-engine.git)
+git clone https://github.com/siddhardha99/crypto-alpha-engine.git
 cd crypto-alpha-engine
 uv sync --extra dev        # create .venv, install runtime + dev deps
 uv run pytest              # sanity check: ~850 tests must pass
