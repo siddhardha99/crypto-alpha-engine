@@ -109,6 +109,11 @@ def _logical_unary() -> tuple[tuple[Any, ...], dict[str, Any]]:
     return (synthetic_series(n=50) > 100.0,), {}
 
 
+def _pct_change_series_factory() -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """For *_change ops which call pct_change — positional int 'window'."""
+    return (synthetic_series(n=50),), {"window": 5}
+
+
 _CAUSALITY_CATALOGUE: dict[str, Callable[[], tuple[tuple[Any, ...], dict[str, Any]]]] = {
     # ---- timeseries -----------------------------------------------
     "ts_mean": _single_series_window(5),
@@ -150,6 +155,16 @@ _CAUSALITY_CATALOGUE: dict[str, Callable[[], tuple[tuple[Any, ...], dict[str, An
     "and_": _logical_binary,
     "or_": _logical_binary,
     "not_": _logical_unary,
+    # ---- crypto ---------------------------------------------------
+    "funding_z": _single_series_window(5),
+    "oi_change": _pct_change_series_factory,
+    "fear_greed": _single_series_window(5),
+    "btc_dominance_change": _pct_change_series_factory,
+    "stablecoin_mcap_change": _pct_change_series_factory,
+    "active_addresses_change": _pct_change_series_factory,
+    "hashrate_change": _pct_change_series_factory,
+    "dxy_change": _pct_change_series_factory,
+    "spy_correlation": _two_series_window(5),
 }
 
 

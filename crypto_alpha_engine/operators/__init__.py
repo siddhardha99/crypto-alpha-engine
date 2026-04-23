@@ -11,6 +11,7 @@ from __future__ import annotations
 # Submodule imports trigger @register_operator side-effects.
 from crypto_alpha_engine.operators import (  # noqa: F401
     conditional,
+    crypto,
     math,
     timeseries,
 )

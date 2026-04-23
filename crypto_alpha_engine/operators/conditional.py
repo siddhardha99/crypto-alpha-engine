@@ -18,7 +18,7 @@ from crypto_alpha_engine.operators.registry import register_operator
 # ---------------------------------------------------------------------------
 
 
-@register_operator("if_else")
+@register_operator("if_else", arg_types=("series", "series", "series"))
 def if_else(cond: pd.Series, a: pd.Series, b: pd.Series) -> pd.Series:
     """Element-wise: ``a`` where ``cond`` is true, else ``b``.
 
@@ -35,19 +35,19 @@ def if_else(cond: pd.Series, a: pd.Series, b: pd.Series) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
-@register_operator("greater_than")
+@register_operator("greater_than", arg_types=("series", "series_or_scalar"))
 def greater_than(x: pd.Series, y: pd.Series | float) -> pd.Series:
     """Element-wise ``x > y``."""
     return x > y
 
 
-@register_operator("less_than")
+@register_operator("less_than", arg_types=("series", "series_or_scalar"))
 def less_than(x: pd.Series, y: pd.Series | float) -> pd.Series:
     """Element-wise ``x < y``."""
     return x < y
 
 
-@register_operator("equal")
+@register_operator("equal", arg_types=("series", "series_or_scalar"))
 def equal(x: pd.Series, y: pd.Series | float) -> pd.Series:
     """Element-wise ``x == y``. Watch out for float precision — prefer ``abs(x-y) < eps``."""
     return x == y
@@ -58,19 +58,19 @@ def equal(x: pd.Series, y: pd.Series | float) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
-@register_operator("and_")
+@register_operator("and_", arg_types=("series", "series"))
 def and_(a: pd.Series, b: pd.Series) -> pd.Series:
     """Element-wise logical AND. Inputs are cast to bool dtype."""
     return a.astype(bool) & b.astype(bool)
 
 
-@register_operator("or_")
+@register_operator("or_", arg_types=("series", "series"))
 def or_(a: pd.Series, b: pd.Series) -> pd.Series:
     """Element-wise logical OR."""
     return a.astype(bool) | b.astype(bool)
 
 
-@register_operator("not_")
+@register_operator("not_", arg_types=("series",))
 def not_(a: pd.Series) -> pd.Series:
     """Element-wise logical NOT."""
     return ~a.astype(bool)

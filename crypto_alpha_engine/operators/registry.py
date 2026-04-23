@@ -1,38 +1,39 @@
 """Operator registry — AST-level name → pure-function kernel mapping.
 
-Every operator the factor compiler can invoke lives here. The key is the
-name as it appears inside a factor AST (e.g. ``"ts_mean"``,
-``"funding_z"``); the value is a pure-function kernel that takes Series
-and numeric parameters and returns a Series.
+Every operator the factor compiler can invoke lives here. Each entry
+records:
+
+* The AST-level name (``"ts_mean"``, ``"funding_z"``, ...) — the key.
+* The pure-function kernel that implements it.
+* A tuple of **AST-level argument types** describing what each
+  positional argument in the AST may contain.
+
+The third field is what the Phase 4 compiler consults when walking a
+``FactorNode``. It distinguishes "this position expects a Series
+(possibly via a feature-name string that resolves to one)" from "this
+position expects a literal int". See SPEC §5.1 / §7 and the design
+rationale recorded in ``docs/methodology.md``.
+
+AST-level type vocabulary
+-------------------------
+
+* ``"series"`` — the arg evaluates to a ``pd.Series``. At the AST
+  level this may be a sub-:class:`FactorNode` (another computed
+  expression) OR a string naming a feature that the compiler resolves
+  via the engine's features dict. It is NEVER a literal numeric.
+* ``"int"`` — literal integer (windows, lags, half-lives).
+* ``"float"`` — literal float (quantile positions, thresholds).
+* ``"bool"`` — literal boolean.
+* ``"series_or_scalar"`` — either a ``"series"`` or a literal numeric.
+  Used by the binary arithmetic and comparison operators so a factor
+  can write ``greater_than("close", 100)``.
 
 Separation of concerns
 ----------------------
 
-* This registry is **separate** from the :mod:`data.registry`
-  (DataSource registry). Different vocabularies: sources produce data
-  at the edge of the engine; operators transform data inside it.
-* The Phase 4 compiler walks a ``FactorNode`` tree, resolves each
-  string-typed argument (e.g. ``"BTC/USD"``) to a Series via the
-  features dict the engine passes in, and calls the kernel. Phase 3
-  doesn't implement that compiler — it just ships the kernels.
-
-Registration
-------------
-
-Operators register via the :func:`register_operator` decorator at
-import time::
-
-    @register_operator("ts_mean")
-    def ts_mean(x: pd.Series, window: int) -> pd.Series:
-        ...
-
-Importing :mod:`crypto_alpha_engine.operators` triggers registration of
-every built-in operator via that package's ``__init__.py``. External
-operators (contributed factor primitives) register from user code the
-same way.
-
-Duplicate names raise :class:`ConfigError`. There's no concept of
-"override" — operator semantics are part of the public contract.
+This registry is **separate** from the :mod:`data.registry`: the data
+registry produces data at the edge of the engine; the operator
+registry transforms data inside it.
 """
 
 from __future__ import annotations
@@ -50,53 +51,108 @@ window-based, etc.), so we don't pin a Callable[[Series, int], Series]
 here — that would refuse to register, say, ``if_else`` (ternary).
 """
 
-_OPERATORS: dict[str, Operator] = {}
+ArgType = str
+"""One of the strings in :data:`VALID_ARG_TYPES`."""
+
+VALID_ARG_TYPES: frozenset[ArgType] = frozenset(
+    {"series", "int", "float", "bool", "series_or_scalar"}
+)
+"""The closed set of AST-level argument type tags."""
 
 
-def register_operator(name: str) -> Callable[[Operator], Operator]:
-    """Decorator: register ``fn`` under ``name`` in the operator registry.
+class OperatorSpec:
+    """What the registry knows about one operator."""
+
+    __slots__ = ("name", "fn", "arg_types")
+
+    def __init__(self, name: str, fn: Operator, arg_types: tuple[ArgType, ...]) -> None:
+        self.name = name
+        self.fn = fn
+        self.arg_types = arg_types
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"OperatorSpec(name={self.name!r}, arg_types={self.arg_types!r})"
+
+
+_OPERATORS: dict[str, OperatorSpec] = {}
+
+
+def register_operator(
+    name: str,
+    *,
+    arg_types: tuple[ArgType, ...],
+) -> Callable[[Operator], Operator]:
+    """Decorator: register ``fn`` under ``name`` with the given AST arg types.
 
     Args:
-        name: AST-level operator name (e.g. ``"ts_mean"``,
-            ``"funding_z"``). Must be unique.
+        name: AST-level operator name. Must be unique.
+        arg_types: Tuple describing the AST-level type of each
+            positional argument. Every element must be in
+            :data:`VALID_ARG_TYPES`.
 
     Returns:
-        The original function, unchanged. The decorator's only
-        side effect is registration.
+        The original function, unchanged.
 
     Raises:
-        ConfigError: If ``name`` is already registered. Re-registration
-            is refused rather than silently overwriting; operator
-            semantics are part of the engine's public contract.
+        ConfigError: If ``name`` is already registered, or if any
+            entry in ``arg_types`` is not a known tag.
 
     Example:
-        >>> @register_operator("demo_op")
+        >>> @register_operator("demo_op", arg_types=("series", "int"))
         ... def demo(x, window):
         ...     return x
-        >>> get_operator("demo_op") is demo
-        True
+        >>> get_operator_arg_types("demo_op")
+        ('series', 'int')
     """
+    normalised: tuple[ArgType, ...] = tuple(arg_types)
+    for tag in normalised:
+        if tag not in VALID_ARG_TYPES:
+            raise ConfigError(
+                f"register_operator {name!r}: unknown arg type {tag!r}; "
+                f"valid: {sorted(VALID_ARG_TYPES)}"
+            )
 
     def decorator(fn: Operator) -> Operator:
         if name in _OPERATORS:
-            existing = _OPERATORS[name]
+            existing = _OPERATORS[name].fn
             raise ConfigError(
                 f"cannot register operator {name!r}: another kernel is "
                 f"already registered ({existing.__module__}."
                 f"{existing.__qualname__})"
             )
-        _OPERATORS[name] = fn
+        _OPERATORS[name] = OperatorSpec(name=name, fn=fn, arg_types=normalised)
         return fn
 
     return decorator
 
 
 def get_operator(name: str) -> Operator:
-    """Look up a registered operator kernel by name.
+    """Return the kernel registered under ``name``.
 
     Raises:
         ConfigError: If no operator is registered under that name.
     """
+    return _get_spec(name).fn
+
+
+def get_operator_arg_types(name: str) -> tuple[ArgType, ...]:
+    """Return the AST-level argument types for the operator ``name``.
+
+    The Phase 4 compiler uses this to decide how to transform each
+    AST argument before calling the kernel:
+
+    * ``"series"`` args are either recursively evaluated (if the AST
+      gives a :class:`FactorNode`) or resolved via the features dict
+      (if the AST gives a string).
+    * Scalar-typed args are passed through literally.
+
+    Raises:
+        ConfigError: If no operator is registered under that name.
+    """
+    return _get_spec(name).arg_types
+
+
+def _get_spec(name: str) -> OperatorSpec:
     try:
         return _OPERATORS[name]
     except KeyError as err:
@@ -118,12 +174,12 @@ def _reset_for_tests() -> None:
     _OPERATORS.clear()
 
 
-def _snapshot_for_tests() -> dict[str, Operator]:
+def _snapshot_for_tests() -> dict[str, OperatorSpec]:
     """Return a copy of the current registry. Tests only."""
     return dict(_OPERATORS)
 
 
-def _restore_for_tests(snapshot: dict[str, Operator]) -> None:
+def _restore_for_tests(snapshot: dict[str, OperatorSpec]) -> None:
     """Replace the registry with ``snapshot``. Tests only."""
     _OPERATORS.clear()
     _OPERATORS.update(snapshot)
