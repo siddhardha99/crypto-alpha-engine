@@ -79,7 +79,7 @@ from crypto_alpha_engine.backtest.walk_forward import (
 )
 from crypto_alpha_engine.data.splits import DataSplits
 from crypto_alpha_engine.exceptions import ConfigError, LookAheadDetected
-from crypto_alpha_engine.factor.ast import factor_id_of, walk
+from crypto_alpha_engine.factor.ast import factor_id, factor_id_of, walk
 from crypto_alpha_engine.factor.compiler import CompiledFactor, compile_factor
 from crypto_alpha_engine.factor.complexity import factor_complexity, unique_features
 from crypto_alpha_engine.operators.registry import get_operator_causal_safe
@@ -103,7 +103,6 @@ booleans. See :func:`default_signal_rule` for the default.
 """
 
 _LAYER_2_N_CUTOFFS: int = 5
-_LAYER_2_RNG_SEED: int = 42  # deterministic per-run
 _IN_SAMPLE_MIN_BARS: int = 24
 
 
@@ -343,9 +342,34 @@ def _layer_2_causality_check(
     unread feature's perturbation couldn't possibly affect output, so
     including it would just slow the check.
 
-    ``n_cutoffs`` random cutoffs in the middle 60% of the data range.
-    Fixed RNG seed for reproducibility within a run (so the same
-    factor produces the same check output every time).
+    Blind spot, documented
+    ----------------------
+
+    ``n_cutoffs`` random cutoffs are drawn from the **middle 60%** of
+    the index (indices in ``[0.2·n, 0.8·n)``). Cutoffs in the first or
+    last 20% are deliberately excluded because random cutoffs near
+    the data boundaries produce degenerate "past" windows — fewer
+    than ``0.2·n`` bars to compare — where minor numerical noise
+    dominates any real lookahead signal.
+
+    The tradeoff: **edge-case lookahead** — an operator that's causal
+    everywhere except the first or last 20% due to boundary handling
+    (centered-window fill, tail-reflective padding, etc.) — is NOT
+    exercised by Layer 2. Layer 1's operator-level ``causal_safe``
+    annotation is the primary defense; Layer 2 validates composition
+    correctness in the interior of the index.
+
+    Seed derivation
+    ---------------
+
+    The RNG seed is derived from the factor's structural ID — same
+    factor always gets tested at the same cutoffs, so a failure is
+    reproducible when debugging. Different factors get different
+    cutoffs, so the cutoff space is collectively well-explored across
+    the factor population. Process-wide fixed seeds would make one
+    unlucky pattern hide across every factor; per-call randomness
+    would make failures non-reproducible. Per-factor is the middle
+    ground.
     """
     reads = unique_features(root)
     perturb_keys = reads & set(features.keys())
@@ -357,7 +381,12 @@ def _layer_2_causality_check(
     if n < 2 * n_cutoffs:
         return  # not enough data to pick meaningful cutoffs
 
-    rng = np.random.default_rng(_LAYER_2_RNG_SEED)
+    # Per-factor deterministic seed: SHA-256 of the factor id, first
+    # 8 bytes as int64. Reproducible per factor, well-distributed
+    # across factors.
+    seed_bytes = hashlib.sha256(factor_id(root).encode("utf-8")).digest()
+    seed_int = int.from_bytes(seed_bytes[:8], "big")
+    rng = np.random.default_rng(seed_int)
     low = int(n * 0.2)
     high = int(n * 0.8)
     if high <= low:
