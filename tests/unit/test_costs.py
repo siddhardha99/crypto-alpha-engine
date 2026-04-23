@@ -21,6 +21,7 @@ import pandas as pd
 import pytest
 
 from crypto_alpha_engine.backtest.costs import (
+    CostModelSaturation,
     borrow_rate_per_period,
     compute_funding_charge,
     fee_rate,
@@ -99,14 +100,35 @@ class TestSlippageRate:
 
     def test_saturation_above_ten_percent_emits_warning(self) -> None:
         """Trading > 10% of daily volume is outside the modeled range.
-        We cap at 1% and warn — silent saturation would understate cost."""
+        We cap at 1% and warn — silent saturation would understate cost.
+
+        The warning is a proper ``CostModelSaturation`` subclass of
+        ``UserWarning`` (not a plain UserWarning, not a log line), so
+        callers can filter or escalate programmatically — e.g., set
+        ``filterwarnings("error", category=CostModelSaturation)`` in
+        property tests.
+        """
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             rate = slippage_rate(
                 trade_notional=20_000.0, daily_volume=100_000.0, cost_model=self.cm
             )
         assert rate == pytest.approx(0.01)
-        assert any("slippage" in str(w.message).lower() for w in caught)
+        saturation_warnings = [w for w in caught if issubclass(w.category, CostModelSaturation)]
+        assert len(saturation_warnings) == 1
+        assert "slippage" in str(saturation_warnings[0].message).lower()
+
+    def test_saturation_warning_is_escalatable_to_error(self) -> None:
+        """A test that proves the warning can be turned into a hard
+        failure by a caller — the whole point of using a subclass."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", category=CostModelSaturation)
+            with pytest.raises(CostModelSaturation):
+                slippage_rate(
+                    trade_notional=20_000.0,
+                    daily_volume=100_000.0,
+                    cost_model=self.cm,
+                )
 
     def test_monotonic_in_trade_size(self) -> None:
         """Holding volume fixed, larger trades have weakly-greater slippage
@@ -160,6 +182,38 @@ class TestBorrowRate:
         rate = borrow_rate_per_period(cm, periods_per_year=365.0)
         assert rate == pytest.approx(0.002 / 365.0, rel=1e-9)
 
+    def test_four_hour_bars(self) -> None:
+        """2190 four-hour bars per year is a real bar frequency. A bug
+        in a rate-lookup table could make 8760 and 365 work while 2190
+        silently broke; pin it separately."""
+        cm = CostModel(borrow_rate_bps=20.0)
+        rate = borrow_rate_per_period(cm, periods_per_year=2190.0)
+        assert rate == pytest.approx(0.002 / 2190.0, rel=1e-9)
+
+    def test_non_integer_periods_per_year(self) -> None:
+        """``periods_per_year`` is typed as ``float`` — non-integer
+        values (e.g., 365.25 for leap-year-aware daily) must still
+        produce a sensible per-period rate."""
+        cm = CostModel(borrow_rate_bps=20.0)
+        rate = borrow_rate_per_period(cm, periods_per_year=365.25)
+        assert rate == pytest.approx(0.002 / 365.25, rel=1e-9)
+
+    @pytest.mark.parametrize("periods", [8760.0, 2190.0, 365.25, 52.0])
+    def test_linear_round_trip(self, periods: float) -> None:
+        """Linear (simple-interest) invariant: convert to per-bar, then
+        multiply back by the bar count, get the original annual rate.
+
+        This is the behavioural seal on "linear, not compound". If the
+        function ever flipped to ``(1 + r)**(1/N) - 1``, this check
+        would fire at every frequency simultaneously.
+        """
+        annual_bps = 20.0
+        annual_fraction = annual_bps / 10_000.0
+        cm = CostModel(borrow_rate_bps=annual_bps)
+        per_period = borrow_rate_per_period(cm, periods_per_year=periods)
+        reconstructed = per_period * periods
+        assert reconstructed == pytest.approx(annual_fraction, rel=1e-12)
+
     def test_rejects_non_positive_periods_per_year(self) -> None:
         with pytest.raises(ConfigError, match="periods_per_year"):
             borrow_rate_per_period(CostModel(), periods_per_year=0.0)
@@ -178,6 +232,42 @@ def _aligned_series(position: list[float], funding: list[float]) -> tuple[pd.Ser
 
 
 class TestComputeFundingCharge:
+    def test_sign_convention_single_bar_long_pays(self) -> None:
+        """Sign convention pin, concrete scenario: one bar, +1 BTC long,
+        funding rate +0.0001 → charge == +0.0001 (positive = paid out).
+
+        Keeping this test explicit (single bar, single rate, one
+        multiplicand on each side) pins the sign in the narrowest
+        possible way. A regression that flipped the sign couldn't hide
+        behind multi-bar sums."""
+        idx = pd.date_range("2024-01-01", periods=1, freq="8h", tz="UTC")
+        pos = pd.Series([1.0], index=idx)  # +1 BTC long
+        fr = pd.Series([0.0001], index=idx)  # +0.01% funding
+        charge = compute_funding_charge(pos, fr, CostModel())
+        assert charge == pytest.approx(0.0001)
+        assert charge > 0  # explicit: positive = cost to the long
+
+    def test_sign_convention_single_bar_short_receives(self) -> None:
+        """Symmetric pin: -1 BTC short at +0.0001 funding → charge ==
+        -0.0001 (negative = received)."""
+        idx = pd.date_range("2024-01-01", periods=1, freq="8h", tz="UTC")
+        pos = pd.Series([-1.0], index=idx)  # -1 BTC short
+        fr = pd.Series([0.0001], index=idx)  # +0.01% funding
+        charge = compute_funding_charge(pos, fr, CostModel())
+        assert charge == pytest.approx(-0.0001)
+        assert charge < 0  # explicit: negative = receipt to the short
+
+    def test_sign_convention_negative_funding_flips_signs(self) -> None:
+        """When funding goes negative (shorts pay longs), signs flip:
+        long at -0.0001 receives 0.0001, short at -0.0001 pays 0.0001.
+        Pins the full 2x2 matrix of (long/short) × (funding+/funding-)."""
+        idx = pd.date_range("2024-01-01", periods=1, freq="8h", tz="UTC")
+        neg_fr = pd.Series([-0.0001], index=idx)
+        long_pos = pd.Series([1.0], index=idx)
+        short_pos = pd.Series([-1.0], index=idx)
+        assert compute_funding_charge(long_pos, neg_fr, CostModel()) == pytest.approx(-0.0001)
+        assert compute_funding_charge(short_pos, neg_fr, CostModel()) == pytest.approx(0.0001)
+
     def test_long_position_pays_positive_funding(self) -> None:
         """When funding is positive, longs pay shorts. Our sign convention:
         returned charge is a *cost* — positive number = money out."""

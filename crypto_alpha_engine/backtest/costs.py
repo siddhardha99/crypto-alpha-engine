@@ -41,13 +41,33 @@ _VOLUME_RATIO_FLOOR: float = 0.01  # 1% of volume
 _VOLUME_RATIO_CAP: float = 0.10  # 10% of volume
 
 
+class CostModelSaturation(UserWarning):
+    """Emitted when a cost formula is applied outside its modeled range.
+
+    Currently fires only from :func:`slippage_rate` when a trade
+    exceeds 10% of daily volume. Subclass of ``UserWarning`` so callers
+    can filter or escalate programmatically:
+
+    * ``warnings.filterwarnings("error", category=CostModelSaturation)``
+      makes saturations hard failures (useful in property tests).
+    * ``warnings.filterwarnings("ignore", category=CostModelSaturation)``
+      silences them when testing the saturation branch on purpose.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Fees
 # ---------------------------------------------------------------------------
 
 
 def fee_rate(cost_model: CostModel, *, is_taker: bool = True) -> float:
-    """Return the per-side fee as a fractional rate.
+    """Return the per-side fee as a fractional rate of **trade notional**.
+
+    The returned rate is applied against the absolute notional value
+    of a trade (``|position_delta| · price``), not against realized
+    PnL. Exchanges bill on notional; a winning trade and a losing
+    trade of the same size pay the same fee. The simulation layer
+    (commit 2) enforces this at application site.
 
     Args:
         cost_model: The backtest's cost configuration. Must carry
@@ -59,8 +79,8 @@ def fee_rate(cost_model: CostModel, *, is_taker: bool = True) -> float:
             maker strategy.
 
     Returns:
-        Fractional fee: ``10 bps → 0.001``. Always strictly positive
-        for any valid ``CostModel``.
+        Fractional fee applied to trade notional: ``10 bps → 0.001``.
+        Always strictly positive for any valid ``CostModel``.
 
     Example:
         >>> fee_rate(CostModel())
@@ -144,6 +164,7 @@ def slippage_rate(
         f"{_SLIPPAGE_CAP:.2%} (SPEC §8 volume_based model only defined up to "
         f"{_VOLUME_RATIO_CAP:.0%}). Consider splitting the order or modeling "
         f"market impact explicitly.",
+        category=CostModelSaturation,
         stacklevel=2,
     )
     return _SLIPPAGE_CAP
@@ -159,7 +180,17 @@ def borrow_rate_per_period(
     *,
     periods_per_year: float,
 ) -> float:
-    """Convert the annual borrow-bps rate to a per-bar fraction.
+    """Convert the annual borrow-bps rate to a per-bar fraction (linear).
+
+    **Simple (linear) interest**, not compound: the annual rate is
+    divided by ``periods_per_year``. At realistic borrow levels
+    (10-50 bps/yr) the compound-vs-linear difference is sub-basis-point
+    over a year; we take the simpler model because exchange borrow
+    desks quote their rates as simple interest to match.
+
+    Round-trip invariant: ``borrow_rate_per_period(cm, N) * N ==
+    cm.borrow_rate_bps / 10_000``. Exact, not approximate — a simple
+    divide-and-multiply commutes.
 
     The borrow cost is charged every bar against a short spot position.
     The caller — typically the simulation layer — multiplies this
