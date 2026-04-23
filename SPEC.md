@@ -199,8 +199,6 @@ crypto-alpha-engine/
 | ETH/USD OHLCV (daily) | Coinbase | 1d | 2017-08-01 to now | parquet |
 | BTC perp funding rate | BitMEX (`BTC/USD:BTC`) | 8h (forward-fill to 1h) | 2016-05-14 to now | parquet |
 | ETH perp funding rate | BitMEX (`ETH/USD:BTC`) | 8h (forward-fill to 1h) | 2018-08-02 to now | parquet |
-| BTC perp open interest | Coinglass (aggregated) | 1h | API's available range | parquet |
-| ETH perp open interest | Coinglass (aggregated) | 1h | API's available range | parquet |
 | Fear & Greed Index | Alternative.me | 1d | 2018-02-01 to now | parquet |
 | BTC active addresses | Blockchain.com | 1d | 2009 to now | parquet |
 | BTC hashrate | Blockchain.com | 1d | 2009 to now | parquet |
@@ -220,15 +218,10 @@ crypto-alpha-engine/
   funding rates as a **signal**, not a PnL source, so the inverse-vs-
   linear distinction is orthogonal to factor design (see
   `docs/methodology.md`).
-* **Coinglass open interest** aggregates OI across multiple exchanges,
-  a closer proxy to "the market's aggregate OI" than any single venue.
-  Requires a free API key in `COINGLASS_API_KEY`. Missing key → the OI
-  source is silently skipped at download time, the same flexibility
-  applied to `CRYPTOPANIC_API_KEY`.
-* **"API's available range" for OI** is left open because Coinglass's
-  free-tier history window changes over time. The downloader pulls
-  everything the API offers on each run; it never invents coverage it
-  doesn't have.
+* **CryptoPanic news** is gated by a free API key in
+  `CRYPTOPANIC_API_KEY`. If the key is missing at import time, the
+  source is silently absent from the registry and the download
+  pipeline skips it cleanly.
 
 **Why we deliberately avoid Binance, Bybit, and Binance.US.** Binance
 blocks US IPs with HTTP 451; Bybit blocks via CloudFront from several
@@ -237,6 +230,17 @@ of pairs with shallow history. None are reliable infrastructure for an
 open-source project where contributors and CI jobs run from many
 countries. See `docs/methodology.md` for the selection criteria
 applied to new exchanges.
+
+**Open interest (deferred).** Phase 1 ships without a built-in open-
+interest source. Free-tier aggregated-OI providers (Coinglass,
+CryptoQuant, Glassnode) all require paid plans as of 2026, which
+breaks our "free-tier only" principle (§5.1). The planned replacement
+is a user-contributed DataSource that aggregates OI from free exchange
+APIs (BitMEX, OKX, Deribit, Coinbase perps, dYdX, Hyperliquid).
+Contributors who need OI sooner can implement this following
+`docs/adding_custom_sources.md`. When the pipeline is ready as an
+external package, it will be documented in the README as the
+recommended OI source.
 
 ### Data splits (enforced in `data/splits.py`)
 

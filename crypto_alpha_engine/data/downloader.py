@@ -365,7 +365,13 @@ def paginated_ccxt_ohlcv(
     end_ms: int | None = None,
     limit: int = _DEFAULT_LIMIT,
 ) -> list[list[float]]:
-    """Page through ``exchange.fetch_ohlcv`` until exhausted or past ``end_ms``."""
+    """Page through ``exchange.fetch_ohlcv`` until exhausted or past ``end_ms``.
+
+    Termination is by empty-response or stuck-cursor, NOT by
+    ``len(page) < limit``. Some exchanges (Coinbase, notably) return
+    partial pages mid-history when data is sparse, and using "partial
+    page" as an end-of-history signal causes silent truncation.
+    """
     out: list[list[float]] = []
     cursor = since_ms
     for _ in range(_MAX_PAGES):
@@ -377,9 +383,12 @@ def paginated_ccxt_ohlcv(
         if not page:
             break
         out.extend(page)
-        if len(page) < limit:
+        next_cursor = int(page[-1][0]) + 1
+        if next_cursor <= cursor:
+            # Cursor didn't advance — defensive guard against an API
+            # echoing the same page indefinitely.
             break
-        cursor = int(page[-1][0]) + 1
+        cursor = next_cursor
         if end_ms is not None and cursor >= end_ms:
             break
     return out
@@ -393,6 +402,7 @@ def paginated_ccxt_funding(
     end_ms: int | None = None,
     limit: int = _DEFAULT_LIMIT,
 ) -> list[dict[str, Any]]:
+    """See :func:`paginated_ccxt_ohlcv` for termination semantics."""
     out: list[dict[str, Any]] = []
     cursor = since_ms
     for _ in range(_MAX_PAGES):
@@ -404,9 +414,10 @@ def paginated_ccxt_funding(
         if not page:
             break
         out.extend(page)
-        if len(page) < limit:
+        next_cursor = int(page[-1]["timestamp"]) + 1
+        if next_cursor <= cursor:
             break
-        cursor = int(page[-1]["timestamp"]) + 1
+        cursor = next_cursor
         if end_ms is not None and cursor >= end_ms:
             break
     return out
@@ -421,6 +432,7 @@ def paginated_ccxt_oi(
     end_ms: int | None = None,
     limit: int = _DEFAULT_LIMIT,
 ) -> list[dict[str, Any]]:
+    """See :func:`paginated_ccxt_ohlcv` for termination semantics."""
     out: list[dict[str, Any]] = []
     cursor = since_ms
     for _ in range(_MAX_PAGES):
@@ -432,9 +444,10 @@ def paginated_ccxt_oi(
         if not page:
             break
         out.extend(page)
-        if len(page) < limit:
+        next_cursor = int(page[-1]["timestamp"]) + 1
+        if next_cursor <= cursor:
             break
-        cursor = int(page[-1]["timestamp"]) + 1
+        cursor = next_cursor
         if end_ms is not None and cursor >= end_ms:
             break
     return out

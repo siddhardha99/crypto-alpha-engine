@@ -9,6 +9,7 @@ one.
 - [Data sources: US-reachable only](#data-sources-us-reachable-only)
 - [Funding rates: signals, not PnL](#funding-rates-signals-not-pnl)
 - [Extensibility: sources as plugins](#extensibility-sources-as-plugins)
+- [What's deliberately not built-in](#whats-deliberately-not-built-in)
 
 *(More sections will land as later phases are implemented.)*
 
@@ -29,13 +30,13 @@ with at most a free-tier API key. Three major crypto venues are
   compared to Binance global. Insufficient for multi-year backtests.
 
 The alternative set — **Coinbase** (spot), **BitMEX** (perp funding),
-**Coinglass** (aggregated open interest), plus the globally-reachable
-free sources (alternative.me, blockchain.com, DefiLlama, yfinance,
-CoinGecko, CryptoPanic) — works from every region we've tested, with
-or without free-tier API keys. The cost of this choice: the BTC/USD
-(Coinbase) ↔ BTC/USDT (Binance) basis is under 5 bps at 1h bars, which
-is noise relative to 10 bps taker fees and realistic slippage. For
-factor research at hourly timescales, the two are interchangeable.
+plus the globally-reachable free sources (alternative.me,
+blockchain.com, DefiLlama, yfinance, CoinGecko, CryptoPanic) — works
+from every region we've tested, with or without free-tier API keys.
+The cost of this choice: the BTC/USD (Coinbase) ↔ BTC/USDT (Binance)
+basis is under 5 bps at 1h bars, which is noise relative to 10 bps
+taker fees and realistic slippage. For factor research at hourly
+timescales, the two are interchangeable.
 
 ### Criteria for adding a new exchange
 
@@ -93,3 +94,32 @@ reasons:
 The alternative — hardcoding the exchange list — makes every decision
 like "switch from Binance to Coinbase" a migration. The Protocol makes
 it a new file.
+
+## What's deliberately not built-in
+
+The engine ships a small set of built-in sources. Several obvious
+candidates are deliberately **not** shipped — if you want them, they
+belong in a contributed DataSource, not in core.
+
+**Aggregated open interest (no built-in source).** Open interest is a
+genuinely useful feature — the funding/OI divergence signal is a
+standard ingredient in mean-reversion and trend-following factors.
+But every aggregated-OI provider we evaluated (Coinglass, CryptoQuant,
+Glassnode) charges monthly subscriptions in 2026 that break our
+free-tier principle (§4-ish in "Criteria for adding a new exchange"),
+and the cheap paid tiers cap history at 180 days — too shallow for
+multi-year research anyway.
+
+The honest move is to admit that **aggregated OI is out of scope for
+v1.0** rather than silently degrade to a stub or ship a private-key-
+dependent integration. Contributors who need OI now can implement it
+via the DataSource Protocol, aggregating from free exchange APIs
+(BitMEX, OKX, Deribit, Coinbase perps, dYdX, Hyperliquid) themselves.
+When such a pipeline matures as an external package it will be
+documented in the README as the recommended OI source.
+
+This is the shape of decision the Protocol was designed to support:
+**defer-and-extend beats bake-in-a-paid-dependency.** The same rule
+applies to any future feature that would require a commercial
+subscription — including dedicated sentiment APIs, proprietary
+orderbook feeds, and licensed tick data.

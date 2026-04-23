@@ -29,6 +29,12 @@ _EARLIEST: dict[str, pd.Timestamp] = {
     "ETH/USD": pd.Timestamp("2017-08-01", tz="UTC"),
 }
 
+# Coinbase's OHLCV endpoint returns at most 300 bars per call. The
+# shared pagination helper terminates when a page comes back smaller
+# than ``limit``, so passing the API's actual cap is the difference
+# between downloading 300 bars and the full history.
+_COINBASE_PAGE_LIMIT = 300
+
 
 class CoinbaseSpotSource:
     """``DataSource`` wrapping ``ccxt.coinbase()`` for spot OHLCV.
@@ -86,6 +92,7 @@ class CoinbaseSpotSource:
             freq,
             since_ms=_timestamp_to_ms(start),
             end_ms=_timestamp_to_ms(end) if end is not None else None,
+            limit=_COINBASE_PAGE_LIMIT,
         )
         return bars_to_ohlcv_df(bars)
 
