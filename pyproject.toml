@@ -74,7 +74,13 @@ select = [
     "RET",  # flake8-return
     "SIM",  # flake8-simplify
 ]
-ignore = []
+ignore = [
+    # SPEC §13 and CLAUDE.md Pitfall 7 mandate specific exception names
+    # like `LookAheadDetected` and `DataSchemaViolation`. Those names are
+    # deliberate and part of the public contract — we don't rename them
+    # to end in `Error`.
+    "N818",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["N802"]  # test function names may be long/descriptive
