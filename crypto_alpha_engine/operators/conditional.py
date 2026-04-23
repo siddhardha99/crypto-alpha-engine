@@ -18,7 +18,7 @@ from crypto_alpha_engine.operators.registry import register_operator
 # ---------------------------------------------------------------------------
 
 
-@register_operator("if_else", arg_types=("series", "series", "series"))
+@register_operator("if_else", arg_types=("series", "series", "series"), causal_safe=True)
 def if_else(cond: pd.Series, a: pd.Series, b: pd.Series) -> pd.Series:
     """Element-wise: ``a`` where ``cond`` is true, else ``b``.
 
@@ -35,19 +35,19 @@ def if_else(cond: pd.Series, a: pd.Series, b: pd.Series) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
-@register_operator("greater_than", arg_types=("series", "series_or_scalar"))
+@register_operator("greater_than", arg_types=("series", "series_or_scalar"), causal_safe=True)
 def greater_than(x: pd.Series, y: pd.Series | float) -> pd.Series:
     """Element-wise ``x > y``."""
     return x > y
 
 
-@register_operator("less_than", arg_types=("series", "series_or_scalar"))
+@register_operator("less_than", arg_types=("series", "series_or_scalar"), causal_safe=True)
 def less_than(x: pd.Series, y: pd.Series | float) -> pd.Series:
     """Element-wise ``x < y``."""
     return x < y
 
 
-@register_operator("equal", arg_types=("series", "series_or_scalar"))
+@register_operator("equal", arg_types=("series", "series_or_scalar"), causal_safe=True)
 def equal(x: pd.Series, y: pd.Series | float) -> pd.Series:
     """Element-wise ``x == y``. Watch out for float precision — prefer ``abs(x-y) < eps``."""
     return x == y
@@ -58,19 +58,19 @@ def equal(x: pd.Series, y: pd.Series | float) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
-@register_operator("and_", arg_types=("series", "series"))
+@register_operator("and_", arg_types=("series", "series"), causal_safe=True)
 def and_(a: pd.Series, b: pd.Series) -> pd.Series:
     """Element-wise logical AND. Inputs are cast to bool dtype."""
     return a.astype(bool) & b.astype(bool)
 
 
-@register_operator("or_", arg_types=("series", "series"))
+@register_operator("or_", arg_types=("series", "series"), causal_safe=True)
 def or_(a: pd.Series, b: pd.Series) -> pd.Series:
     """Element-wise logical OR."""
     return a.astype(bool) | b.astype(bool)
 
 
-@register_operator("not_", arg_types=("series",))
+@register_operator("not_", arg_types=("series",), causal_safe=True)
 def not_(a: pd.Series) -> pd.Series:
     """Element-wise logical NOT."""
     return ~a.astype(bool)

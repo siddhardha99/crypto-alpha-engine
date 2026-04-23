@@ -318,6 +318,49 @@ class TestAggregateFolds:
         with pytest.raises(ConfigError, match="empty"):
             aggregate_folds([])
 
+    def test_aggregate_rejects_nan_scalar(self) -> None:
+        """NaN in any aggregated scalar is upstream corruption — poison.
+        aggregate_folds must refuse it rather than let it into the
+        ledger where it would become a silent data-integrity bug."""
+        fr_clean = _make_fold_result(30, seed=1)
+        fr_nan = FoldResult(
+            gross_returns=_make_fold_result(30, seed=2, start="2022-02-15").gross_returns,
+            net_returns=_make_fold_result(30, seed=2, start="2022-02-15").net_returns,
+            fees_paid=float("nan"),  # the corruption
+            slippage_paid=0.5,
+            funding_paid=0.0,
+            n_trades=1,
+            turnover=10.0,
+            avg_trade_duration_hours=24.0,
+            avg_position_size=50.0,
+            max_leverage_used=0.8,
+        )
+        with pytest.raises(ConfigError, match="NaN"):
+            aggregate_folds([fr_clean, fr_nan])
+
+    def test_aggregate_allows_inf_scalar(self) -> None:
+        """Inf is NOT corruption — it's honest information. A fold with
+        all-positive trades and no losses can produce inf profit_factor
+        by design (Phase 5 metrics contract); that value is meaningful
+        and must flow through aggregation. Only NaN signals a tripped
+        computation that needs to fail loud."""
+        fr_clean = _make_fold_result(30, seed=1)
+        fr_inf = FoldResult(
+            gross_returns=_make_fold_result(30, seed=2, start="2022-02-15").gross_returns,
+            net_returns=_make_fold_result(30, seed=2, start="2022-02-15").net_returns,
+            fees_paid=float("inf"),  # hypothetical infinite cost
+            slippage_paid=0.5,
+            funding_paid=0.0,
+            n_trades=1,
+            turnover=10.0,
+            avg_trade_duration_hours=24.0,
+            avg_position_size=50.0,
+            max_leverage_used=0.8,
+        )
+        # Must NOT raise — inf is allowed through.
+        agg = aggregate_folds([fr_clean, fr_inf])
+        assert np.isinf(agg.total_fees_paid)
+
     def test_weighted_duration_by_trade_count(self) -> None:
         """avg_trade_duration_hours is trade-weighted — a fold with
         many trades carries more weight than one with few."""

@@ -63,15 +63,25 @@ VALID_ARG_TYPES: frozenset[ArgType] = frozenset(
 class OperatorSpec:
     """What the registry knows about one operator."""
 
-    __slots__ = ("name", "fn", "arg_types")
+    __slots__ = ("name", "fn", "arg_types", "causal_safe")
 
-    def __init__(self, name: str, fn: Operator, arg_types: tuple[ArgType, ...]) -> None:
+    def __init__(
+        self,
+        name: str,
+        fn: Operator,
+        arg_types: tuple[ArgType, ...],
+        causal_safe: bool,
+    ) -> None:
         self.name = name
         self.fn = fn
         self.arg_types = arg_types
+        self.causal_safe = causal_safe
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"OperatorSpec(name={self.name!r}, arg_types={self.arg_types!r})"
+        return (
+            f"OperatorSpec(name={self.name!r}, arg_types={self.arg_types!r}, "
+            f"causal_safe={self.causal_safe!r})"
+        )
 
 
 _OPERATORS: dict[str, OperatorSpec] = {}
@@ -81,14 +91,34 @@ def register_operator(
     name: str,
     *,
     arg_types: tuple[ArgType, ...],
+    causal_safe: bool,
 ) -> Callable[[Operator], Operator]:
     """Decorator: register ``fn`` under ``name`` with the given AST arg types.
+
+    ``causal_safe`` is **required**, no default. Every registration
+    must state explicitly whether the operator respects Principle 2
+    (no lookahead bias). Engine's Layer 1 causality check reads this
+    attribute off the registry to reject any factor that uses an
+    operator declared unsafe. Requiring explicit declaration means
+    adding a future look-ahead-using operator (e.g., for retrospective
+    research) is a deliberate, visible act — not a silent default.
+
+    A canary test in ``tests/unit/test_engine.py`` iterates the
+    registry after import and asserts every spec has ``causal_safe``
+    set to True. If a future operator is registered with
+    ``causal_safe=False``, the canary fires — the registration is
+    allowed (for research use cases), but nobody can silently slip
+    one in.
 
     Args:
         name: AST-level operator name. Must be unique.
         arg_types: Tuple describing the AST-level type of each
             positional argument. Every element must be in
             :data:`VALID_ARG_TYPES`.
+        causal_safe: Whether the operator's output at time ``t``
+            depends only on inputs at times ``<= t``. True for every
+            operator in Phase 3-5; False is reserved for deliberately
+            acausal operators added for research purposes.
 
     Returns:
         The original function, unchanged.
@@ -98,7 +128,7 @@ def register_operator(
             entry in ``arg_types`` is not a known tag.
 
     Example:
-        >>> @register_operator("demo_op", arg_types=("series", "int"))
+        >>> @register_operator("demo_op", arg_types=("series", "int"), causal_safe=True)
         ... def demo(x, window):
         ...     return x
         >>> get_operator_arg_types("demo_op")
@@ -120,10 +150,24 @@ def register_operator(
                 f"already registered ({existing.__module__}."
                 f"{existing.__qualname__})"
             )
-        _OPERATORS[name] = OperatorSpec(name=name, fn=fn, arg_types=normalised)
+        _OPERATORS[name] = OperatorSpec(
+            name=name, fn=fn, arg_types=normalised, causal_safe=causal_safe
+        )
         return fn
 
     return decorator
+
+
+def get_operator_causal_safe(name: str) -> bool:
+    """Return the ``causal_safe`` flag for the operator ``name``.
+
+    The engine's Layer 1 causality check uses this to reject factors
+    that reference unsafe operators before any simulation runs.
+
+    Raises:
+        ConfigError: If no operator is registered under that name.
+    """
+    return _get_spec(name).causal_safe
 
 
 def get_operator(name: str) -> Operator:

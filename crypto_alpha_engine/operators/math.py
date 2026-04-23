@@ -28,25 +28,25 @@ SeriesOrScalar = pd.Series | Scalar
 # ---------------------------------------------------------------------------
 
 
-@register_operator("add", arg_types=("series_or_scalar", "series_or_scalar"))
+@register_operator("add", arg_types=("series_or_scalar", "series_or_scalar"), causal_safe=True)
 def add(a: SeriesOrScalar, b: SeriesOrScalar) -> pd.Series:
     """Element-wise ``a + b``. At least one argument should be a Series."""
     return _to_series(a) + b
 
 
-@register_operator("sub", arg_types=("series_or_scalar", "series_or_scalar"))
+@register_operator("sub", arg_types=("series_or_scalar", "series_or_scalar"), causal_safe=True)
 def sub(a: SeriesOrScalar, b: SeriesOrScalar) -> pd.Series:
     """Element-wise ``a - b``."""
     return _to_series(a) - b
 
 
-@register_operator("mul", arg_types=("series_or_scalar", "series_or_scalar"))
+@register_operator("mul", arg_types=("series_or_scalar", "series_or_scalar"), causal_safe=True)
 def mul(a: SeriesOrScalar, b: SeriesOrScalar) -> pd.Series:
     """Element-wise ``a * b``."""
     return _to_series(a) * b
 
 
-@register_operator("div", arg_types=("series_or_scalar", "series_or_scalar"))
+@register_operator("div", arg_types=("series_or_scalar", "series_or_scalar"), causal_safe=True)
 def div(a: SeriesOrScalar, b: SeriesOrScalar) -> pd.Series:
     """Element-wise ``a / b``. Division by zero returns ``NaN``, not ``inf``."""
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -59,7 +59,7 @@ def div(a: SeriesOrScalar, b: SeriesOrScalar) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
-@register_operator("log", arg_types=("series",))
+@register_operator("log", arg_types=("series",), causal_safe=True)
 def log(x: pd.Series) -> pd.Series:
     """Natural log. Non-positive inputs → ``NaN``."""
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -68,7 +68,7 @@ def log(x: pd.Series) -> pd.Series:
     return pd.Series(arr, index=x.index, name=x.name).replace([np.inf, -np.inf], np.nan)
 
 
-@register_operator("exp", arg_types=("series",))
+@register_operator("exp", arg_types=("series",), causal_safe=True)
 def exp(x: pd.Series) -> pd.Series:
     """``e ** x``. Overflow clips to ``inf`` (numpy's default)."""
     with np.errstate(over="ignore"):
@@ -76,19 +76,19 @@ def exp(x: pd.Series) -> pd.Series:
     return pd.Series(arr, index=x.index, name=x.name)
 
 
-@register_operator("abs", arg_types=("series",))
+@register_operator("abs", arg_types=("series",), causal_safe=True)
 def abs_(x: pd.Series) -> pd.Series:
     """Element-wise absolute value. Registered as ``abs``."""
     return x.abs()
 
 
-@register_operator("sign", arg_types=("series",))
+@register_operator("sign", arg_types=("series",), causal_safe=True)
 def sign(x: pd.Series) -> pd.Series:
     """Element-wise sign: +1, 0, or -1. ``NaN`` stays ``NaN``."""
     return pd.Series(np.sign(x.to_numpy(dtype=float)), index=x.index, name=x.name)
 
 
-@register_operator("sqrt", arg_types=("series",))
+@register_operator("sqrt", arg_types=("series",), causal_safe=True)
 def sqrt(x: pd.Series) -> pd.Series:
     """Square root. Negative inputs → ``NaN``."""
     with np.errstate(invalid="ignore"):
@@ -96,7 +96,7 @@ def sqrt(x: pd.Series) -> pd.Series:
     return pd.Series(arr, index=x.index, name=x.name)
 
 
-@register_operator("power", arg_types=("series", "float"))
+@register_operator("power", arg_types=("series", "float"), causal_safe=True)
 def power(x: pd.Series, p: float) -> pd.Series:
     """``x ** p``. Results that would be complex (e.g. ``(-1) ** 0.5``) are ``NaN``."""
     with np.errstate(invalid="ignore"):
@@ -104,20 +104,20 @@ def power(x: pd.Series, p: float) -> pd.Series:
     return pd.Series(arr, index=x.index, name=x.name)
 
 
-@register_operator("tanh", arg_types=("series",))
+@register_operator("tanh", arg_types=("series",), causal_safe=True)
 def tanh(x: pd.Series) -> pd.Series:
     """Hyperbolic tangent. Saturates at ``±1``."""
     return pd.Series(np.tanh(x.to_numpy(dtype=float)), index=x.index, name=x.name)
 
 
-@register_operator("sigmoid", arg_types=("series",))
+@register_operator("sigmoid", arg_types=("series",), causal_safe=True)
 def sigmoid(x: pd.Series) -> pd.Series:
     """Logistic sigmoid: ``1 / (1 + exp(-x))``. Output is in ``(0, 1)``."""
     arr = 1.0 / (1.0 + np.exp(-x.to_numpy(dtype=float)))
     return pd.Series(arr, index=x.index, name=x.name)
 
 
-@register_operator("clip", arg_types=("series", "float", "float"))
+@register_operator("clip", arg_types=("series", "float", "float"), causal_safe=True)
 def clip(x: pd.Series, lo: float, hi: float) -> pd.Series:
     """Clip values to ``[lo, hi]``. If ``lo > hi``, the operator raises."""
     lo_f, hi_f = float(lo), float(hi)

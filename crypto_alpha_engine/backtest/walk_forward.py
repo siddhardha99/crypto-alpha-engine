@@ -178,6 +178,15 @@ def iter_folds(
     Pure generator — no side effects. Same inputs always yield the
     same fold sequence.
 
+    Window behavior: the train window is **expanding** while data
+    history is shallow — ``train_start`` stays pinned at
+    ``data_start`` until the rolling ``train_months`` window fits
+    behind ``test_start``. From the first fold whose ``test_start -
+    train_months >= data_start``, the train window becomes
+    **rolling** (the usual walk-forward behavior). Users observing
+    that early folds have more training data than late folds should
+    expect this; it reflects that we can't invent history.
+
     Args:
         data_index: The features/prices DatetimeIndex. Empty index
             yields no folds.
@@ -186,7 +195,11 @@ def iter_folds(
         config: Window/step geometry. All values in calendar months.
         min_test_bars: Minimum bars required in a (possibly-truncated)
             test window before the fold is yielded. Below this, the
-            partial fold is skipped. Default 24.
+            partial fold is skipped. Default is **24** — tuned for
+            1-hour granularity (≈1 day of bars). Daily callers likely
+            want ~20; 1-minute callers want ~1440 or more. Calibrate
+            to "one period's worth of bars" for whatever bar size
+            the caller is using.
 
     Yields:
         FoldSpec instances with zero-based ``fold_id`` in schedule order.
@@ -298,19 +311,23 @@ def aggregate_folds(fold_results: list[FoldResult]) -> AggregatedFolds:
     else:
         avg_position = 0.0
 
-    # Guard against non-finite leakage into downstream aggregation.
-    # A NaN in any extracted scalar upstream would poison the ledger;
-    # surface loudly if it happens, don't let it through.
+    # Guard against NaN leakage (but allow inf — profit_factor can
+    # legitimately return inf for all-positive trades, per the Phase-5
+    # metrics convention, and an aggregated value of inf means "no
+    # offsetting losses in any fold," which is honest information
+    # rather than corruption. NaN, by contrast, always signals an
+    # upstream computation tripping on degenerate input and must
+    # surface loudly.
     for name, value in (
         ("total_fees_paid", total_fees),
         ("total_slippage_paid", total_slippage),
         ("max_leverage_used", max_leverage),
         ("total_turnover", total_turnover),
     ):
-        if not np.isfinite(value):
+        if np.isnan(value):
             raise ConfigError(
-                f"aggregate_folds: {name} is non-finite ({value!r}); "
-                f"upstream FoldResult contains NaN or inf"
+                f"aggregate_folds: {name} is NaN; upstream FoldResult "
+                f"contains NaN — refusing to let this poison the ledger"
             )
 
     return AggregatedFolds(

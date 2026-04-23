@@ -37,7 +37,7 @@ from crypto_alpha_engine.operators.timeseries import (
 # ---------------------------------------------------------------------------
 
 
-@register_operator("funding_z", arg_types=("series", "int"))
+@register_operator("funding_z", arg_types=("series", "int"), causal_safe=True)
 def funding_z(funding: pd.Series, window: int) -> pd.Series:
     """Rolling z-score of the funding-rate series.
 
@@ -50,7 +50,7 @@ def funding_z(funding: pd.Series, window: int) -> pd.Series:
     return result
 
 
-@register_operator("oi_change", arg_types=("series", "int"))
+@register_operator("oi_change", arg_types=("series", "int"), causal_safe=True)
 def oi_change(oi: pd.Series, window: int) -> pd.Series:
     """Percent change in open interest over ``window`` bars.
 
@@ -66,7 +66,7 @@ def oi_change(oi: pd.Series, window: int) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
-@register_operator("fear_greed", arg_types=("series", "int"))
+@register_operator("fear_greed", arg_types=("series", "int"), causal_safe=True)
 def fear_greed(fg: pd.Series, window: int) -> pd.Series:
     """Rolling mean of the Fear & Greed index — a smoothed sentiment signal.
 
@@ -82,7 +82,7 @@ def fear_greed(fg: pd.Series, window: int) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
-@register_operator("btc_dominance_change", arg_types=("series", "int"))
+@register_operator("btc_dominance_change", arg_types=("series", "int"), causal_safe=True)
 def btc_dominance_change(dominance: pd.Series, window: int) -> pd.Series:
     """Percent change in BTC dominance over ``window`` bars.
 
@@ -93,21 +93,21 @@ def btc_dominance_change(dominance: pd.Series, window: int) -> pd.Series:
     return result
 
 
-@register_operator("stablecoin_mcap_change", arg_types=("series", "int"))
+@register_operator("stablecoin_mcap_change", arg_types=("series", "int"), causal_safe=True)
 def stablecoin_mcap_change(mcap: pd.Series, window: int) -> pd.Series:
     """Percent change in total stablecoin market cap — a crude dry-powder proxy."""
     result: pd.Series = ts_pct_change(mcap, window)
     return result
 
 
-@register_operator("active_addresses_change", arg_types=("series", "int"))
+@register_operator("active_addresses_change", arg_types=("series", "int"), causal_safe=True)
 def active_addresses_change(addrs: pd.Series, window: int) -> pd.Series:
     """Percent change in unique active addresses — on-chain activity signal."""
     result: pd.Series = ts_pct_change(addrs, window)
     return result
 
 
-@register_operator("hashrate_change", arg_types=("series", "int"))
+@register_operator("hashrate_change", arg_types=("series", "int"), causal_safe=True)
 def hashrate_change(rate: pd.Series, window: int) -> pd.Series:
     """Percent change in BTC network hashrate over ``window`` bars.
 
@@ -118,7 +118,7 @@ def hashrate_change(rate: pd.Series, window: int) -> pd.Series:
     return result
 
 
-@register_operator("dxy_change", arg_types=("series", "int"))
+@register_operator("dxy_change", arg_types=("series", "int"), causal_safe=True)
 def dxy_change(dxy: pd.Series, window: int) -> pd.Series:
     """Percent change in the US Dollar Index — a macro risk-off / risk-on signal."""
     result: pd.Series = ts_pct_change(dxy, window)
@@ -130,7 +130,7 @@ def dxy_change(dxy: pd.Series, window: int) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
-@register_operator("spy_correlation", arg_types=("series", "series", "int"))
+@register_operator("spy_correlation", arg_types=("series", "series", "int"), causal_safe=True)
 def spy_correlation(asset: pd.Series, spy: pd.Series, window: int) -> pd.Series:
     """Rolling Pearson correlation between ``asset`` and SPY over ``window``.
 
