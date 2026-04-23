@@ -149,6 +149,43 @@ class TestFeeApplication:
         assert result.fees_paid == pytest.approx(1.0, rel=0.02)
         assert result.fees_paid > 0  # guards against fees-on-PnL regression
 
+    def test_fees_proportional_to_notional_under_profitable_trade(self) -> None:
+        """Complement to the flat-price pin: a profitable round-trip.
+
+        Setup: price runs from 10 → 12 (20% up). init_cash=100, so
+        gross PnL is ~20. Fee rate is 50bps. If fees were mistakenly
+        on PnL, fees_paid ≈ 2·20·0.005 = 0.20. If fees are on
+        NOTIONAL, fees_paid ≈ (100 + ~120)·0.005 = ~1.10.
+
+        The observed value must match the notional figure — the 5.5x
+        gap between the two is too big for noise to hide. A
+        fees-on-PnL bug would pass the flat-price test (PnL = 0
+        collapses the bug's output) but fail spectacularly here.
+        """
+        idx = pd.date_range("2024-01-01", periods=10, freq="1h", tz="UTC")
+        close = pd.Series(np.linspace(10.0, 12.0, 10), index=idx)  # +20% over fold
+        entries = pd.Series([False, True] + [False] * 8, index=idx)
+        exits = pd.Series([False] * 7 + [True] + [False] * 2, index=idx)
+        entries.attrs["shifted"] = True
+        exits.attrs["shifted"] = True
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", CostModelSaturation)
+            result = simulate_fold(
+                entries=entries,
+                exits=exits,
+                close=close,
+                cost_model=CostModel(taker_bps=50.0),
+                initial_cash=100.0,
+            )
+
+        # Notional hypothesis: entry notional ~100, exit notional ~120
+        # (position grew with price), fees ≈ (100 + 120) · 0.005 ≈ 1.10.
+        # PnL hypothesis: PnL ~20, fees ≈ 20 · 0.005 ≈ 0.10.
+        # The assertion admits the notional answer and rejects the PnL one.
+        assert result.fees_paid == pytest.approx(1.10, rel=0.15)
+        assert result.fees_paid > 0.5  # kills the fees-on-PnL branch
+
     def test_zero_trades_zero_fees(self) -> None:
         """No signals → no trades → zero fees. Sanity-check the
         aggregation doesn't pick up phantom fees from nothing."""
