@@ -1,0 +1,125 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crypto-alpha-engine"
+version = "0.1.0"
+description = "Sealed, cheat-proof backtesting engine for crypto quantitative research."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "MudraLabs" }]
+keywords = ["crypto", "backtesting", "quant", "research", "alpha"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "pyarrow>=15.0",
+    "ccxt>=4.3",
+    "pandera>=0.19",
+    "vectorbt>=0.26",
+    "scipy>=1.12",
+    "structlog>=24.1",
+    "yfinance>=0.2.40",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "hypothesis>=6.100",
+    "mypy>=1.9",
+    "ruff>=0.3",
+    "black>=24.3",
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["crypto_alpha_engine"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Conservative starter set; tighten as codebase grows.
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "A",    # flake8-builtins
+    "C4",   # flake8-comprehensions
+    "PT",   # flake8-pytest-style
+    "RET",  # flake8-return
+    "SIM",  # flake8-simplify
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["N802"]  # test function names may be long/descriptive
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["crypto_alpha_engine", "tests"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+
+# Third-party libs without type stubs — revisit per-module as we import them.
+[[tool.mypy.overrides]]
+module = [
+    "ccxt.*",
+    "vectorbt.*",
+    "yfinance.*",
+    "pandera.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "integration: integration tests (use real data fixtures)",
+    "property: hypothesis-based property tests",
+    "slow: tests that take more than a few seconds",
+]
+
+[tool.coverage.run]
+source = ["crypto_alpha_engine"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]

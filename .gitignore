@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / cached files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments / uv
+.venv/
+venv/
+env/
+
+# uv lockfile is versioned (keep). Cache is not.
+.uv-cache/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data — downloaded datasets live outside the repo.
+# Test fixtures in tests/fixtures/ are explicitly tracked.
+data/
+!tests/fixtures/
+
+# Experiment ledger (populated at runtime; never committed)
+ledger.jsonl
+*.ledger.jsonl
+
+# mkdocs
+site/
