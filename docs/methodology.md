@@ -9,6 +9,7 @@ one.
 - [Data sources: US-reachable only](#data-sources-us-reachable-only)
 - [Funding rates: signals, not PnL](#funding-rates-signals-not-pnl)
 - [Extensibility: sources as plugins](#extensibility-sources-as-plugins)
+- [The AST vocabulary layer: when to add a "crypto" operator](#the-ast-vocabulary-layer-when-to-add-a-crypto-operator)
 - [What's deliberately not built-in](#whats-deliberately-not-built-in)
 
 *(More sections will land as later phases are implemented.)*
@@ -94,6 +95,52 @@ reasons:
 The alternative — hardcoding the exchange list — makes every decision
 like "switch from Binance to Coinbase" a migration. The Protocol makes
 it a new file.
+
+## The AST vocabulary layer: when to add a "crypto" operator
+
+Every operator in `crypto_alpha_engine/operators/crypto.py` is a **pure
+renaming alias** over a generic timeseries kernel:
+
+* `funding_z == ts_zscore`
+* `fear_greed == ts_mean`
+* `oi_change`, `btc_dominance_change`, `stablecoin_mcap_change`,
+  `active_addresses_change`, `hashrate_change`, `dxy_change` all
+  `== ts_pct_change`
+* `spy_correlation == ts_corr`
+
+No default windows, no sign conventions, no bounds checks — if you read
+the source, each wrapper is one line of delegation plus a docstring.
+
+**Why they exist anyway:** factor ASTs are a user-authored, ledger-
+stored artefact. `FactorNode("funding_z", args=("BTC/USD:BTC", 24))`
+captures intent — *"z-score the funding rate"* — in a way that
+`FactorNode("ts_zscore", args=("BTC/USD:BTC_funding", 24))` does not.
+The AST is what a human reads in the experiment ledger, what an AI
+agent composes, and what our similarity / complexity metrics see. A
+rich domain vocabulary at that layer pays off in every downstream
+consumer.
+
+**When to add a new crypto-layer operator:**
+
+1. It has a domain name that factor authors naturally reach for.
+2. The computation maps cleanly to an existing timeseries kernel. If
+   it needs genuinely new math (not in `timeseries.py`), add the math
+   to `timeseries.py` first and then wrap.
+3. It binds to a specific data semantic (funding, OI, sentiment, etc.)
+   rather than a generic "take these two columns and correlate them".
+
+**When to SKIP the crypto wrapper and just use the generic operator:**
+
+1. The relationship between inputs isn't specific to a crypto dataset
+   (e.g. correlating two arbitrary features — use `ts_corr`, not a
+   bespoke wrapper).
+2. The operator would differ from the underlying kernel only by a
+   default parameter value. Defaults belong in the factor spec, not in
+   an operator clone.
+
+This pattern keeps the `timeseries` / `math` / `conditional` namespaces
+focused on pure mathematical primitives and lets `crypto` evolve as a
+semantic layer that can be extended without modifying the math.
 
 ## What's deliberately not built-in
 

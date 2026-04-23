@@ -195,12 +195,21 @@ def test_every_registered_operator_is_catalogued() -> None:
 # ---------------------------------------------------------------------------
 
 
+# We run each operator at multiple cutoffs so the check catches a
+# hypothetical off-by-one leak near the start or end of the series —
+# not just at a single mid-series boundary. Cutoffs are chosen to
+# span early-warmup (5), mid-low (10), mid (20), and near-end (40) on
+# the 50-row synthetic series the factories produce.
+_CUTOFFS = [5, 10, 20, 40]
+
+
+@pytest.mark.parametrize("cutoff", _CUTOFFS)
 @pytest.mark.parametrize("op_name", sorted(_CAUSALITY_CATALOGUE.keys()))
-def test_operator_is_causal(op_name: str) -> None:
-    """SPEC §13 causality check, applied programmatically."""
+def test_operator_is_causal(op_name: str, cutoff: int) -> None:
+    """SPEC §13 causality check, applied programmatically at multiple cutoffs."""
     fn = get_operator(op_name)
     factory = _CAUSALITY_CATALOGUE[op_name]
-    assert_causal(fn, inputs_factory=factory, name=op_name)
+    assert_causal(fn, inputs_factory=factory, cutoff=cutoff, name=op_name)
 
 
 # ---------------------------------------------------------------------------

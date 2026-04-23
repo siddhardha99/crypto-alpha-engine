@@ -246,6 +246,31 @@ class TestTsArgmaxArgmin:
         out = ts_argmin(x, 5)
         assert out.iloc[-1] == 0.0
 
+    # --- Endpoint convention: pin down both extremes of bars-ago. ---
+
+    def test_argmax_current_bar_is_max_returns_zero(self) -> None:
+        """Max at the current bar → bars_ago = 0."""
+        x = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0])  # strictly increasing → max is current
+        out = ts_argmax(x, 5)
+        assert out.iloc[-1] == 0.0
+
+    def test_argmax_oldest_bar_is_max_returns_window_minus_one(self) -> None:
+        """Max at the oldest bar in the window → bars_ago = window-1."""
+        x = pd.Series([9.0, 1.0, 2.0, 3.0, 4.0])  # max at index 0; window=5
+        out = ts_argmax(x, 5)
+        assert out.iloc[-1] == 4.0  # window-1
+
+    def test_argmin_current_bar_is_min_returns_zero(self) -> None:
+        x = pd.Series([5.0, 4.0, 3.0, 2.0, 1.0])  # min is current
+        out = ts_argmin(x, 5)
+        assert out.iloc[-1] == 0.0
+
+    def test_argmin_oldest_bar_is_min_returns_window_minus_one(self) -> None:
+        """Min at the oldest bar in the window → bars_ago = window-1."""
+        x = pd.Series([0.1, 1.0, 2.0, 3.0, 4.0])  # min at index 0; window=5
+        out = ts_argmin(x, 5)
+        assert out.iloc[-1] == 4.0  # window-1
+
 
 # ---------------------------------------------------------------------------
 # ts_decay_linear / ts_ema
