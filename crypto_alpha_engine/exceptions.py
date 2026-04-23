@@ -75,3 +75,30 @@ class DataSchemaViolation(CryptoAlphaEngineError):
             ...
         crypto_alpha_engine.exceptions.DataSchemaViolation: ...
     """
+
+
+class DuplicateFactor(CryptoAlphaEngineError):
+    """A candidate factor duplicates an existing entry in the ledger.
+
+    Raised by ``run_backtest`` when ``on_duplicate="raise"`` and
+    :func:`check_duplicate` found a match clearing both SPEC §7
+    thresholds (structural ≥ 0.7 AND behavioral ≥ 0.9). The message
+    includes the matched ledger_line_id and both similarity scores so
+    the caller can locate the prior entry for comparison.
+    """
+
+
+class DuplicateCheckSaturated(CryptoAlphaEngineError):
+    """Duplicate detection exceeded its hard cap without a verdict.
+
+    Raised when :func:`check_duplicate` processed ``hard_cap``
+    structurally-qualifying priors behaviorally without finding a
+    match. The verdict is indeterminate — the candidate might or
+    might not be a duplicate of a prior beyond the cap. Always raised
+    regardless of ``on_duplicate``, because "skip" would need a
+    specific target entry to skip to, which saturation can't supply.
+
+    Typical remedies: prune the ledger, raise ``hard_cap``, or
+    ``skip_duplicate_check=True`` if the caller is consciously
+    overriding.
+    """

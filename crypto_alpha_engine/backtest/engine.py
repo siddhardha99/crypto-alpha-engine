@@ -52,6 +52,7 @@ import hashlib
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -78,10 +79,17 @@ from crypto_alpha_engine.backtest.walk_forward import (
     iter_folds,
 )
 from crypto_alpha_engine.data.splits import DataSplits
-from crypto_alpha_engine.exceptions import ConfigError, LookAheadDetected
+from crypto_alpha_engine.exceptions import (
+    ConfigError,
+    DuplicateCheckSaturated,
+    DuplicateFactor,
+    LookAheadDetected,
+)
 from crypto_alpha_engine.factor.ast import factor_id, factor_id_of, walk
 from crypto_alpha_engine.factor.compiler import CompiledFactor, compile_factor
 from crypto_alpha_engine.factor.complexity import factor_complexity, unique_features
+from crypto_alpha_engine.ledger.duplicate import DuplicateCheck, check_duplicate
+from crypto_alpha_engine.ledger.ledger import Ledger
 from crypto_alpha_engine.operators.registry import get_operator_causal_safe
 from crypto_alpha_engine.regime.breakdown import breakdown_by_regime
 from crypto_alpha_engine.statistics.deflated_sharpe import deflated_sharpe_ratio
@@ -123,6 +131,9 @@ def run_backtest(
     funding_rate: pd.Series | None = None,
     signal_rule: SignalRule | None = None,
     feature_source_names: dict[str, str] | None = None,
+    ledger: Ledger | None = None,
+    on_duplicate: Literal["raise", "skip"] = "raise",
+    skip_duplicate_check: bool = False,
     ledger_prior_count: int = 1,
     ledger_sharpe_variance: float = 0.0,
     factor_max_similarity_to_zoo: float = float("nan"),
@@ -160,16 +171,48 @@ def run_backtest(
         feature_source_names: Optional per-feature provenance strings.
             Included in ``data_version`` for reproducibility per
             SPEC §5.1. Missing keys default to ``"unknown"``.
-        ledger_prior_count: Number of prior factor experiments. Used
-            for DSR multiple-testing correction. Default 1 → DSR
-            returns NaN (no meaningful correction possible from a
-            single trial). Phase 7 wires this to the real ledger.
+        ledger: Optional :class:`Ledger`. When provided:
+
+            * DSR inputs (``n_trials`` + ``sharpe_variance_across_trials``)
+              are populated automatically from the ledger's own
+              ``count_finite_experiments`` / ``sharpe_variance_across_trials``.
+              The ``ledger_prior_count`` and ``ledger_sharpe_variance``
+              kwargs are ignored in that case — explicit here, not a
+              silent override.
+            * Duplicate detection runs against the ledger (unless
+              ``skip_duplicate_check=True``).
+            * The computed :class:`BacktestResult` is appended to the
+              ledger on success (novel factor, no duplicate match).
+        on_duplicate: What to do when a duplicate IS found (both SPEC
+            §7 thresholds cleared).
+
+            * ``"raise"`` (default): raise :class:`DuplicateFactor`.
+            * ``"skip"``: return the matched prior entry's
+              :class:`BacktestResult` directly. Nothing written. Useful
+              for reproducibility workflows that expect a cached
+              answer.
+
+            This knob has no effect when a duplicate is NOT found.
+            ``DuplicateCheckSaturated`` is raised regardless of
+            ``on_duplicate`` — saturation gives no specific target to
+            skip to.
+        skip_duplicate_check: When True, bypass ``check_duplicate``
+            entirely. DSR inputs still pulled from ledger if provided;
+            factor_max_similarity_to_zoo stays at its passed value
+            (or NaN). Useful for reproducibility runs where the
+            caller knows they're re-running a prior factor on purpose.
+        ledger_prior_count: Number of prior factor experiments. Ignored
+            when ``ledger`` is provided (the ledger's count is used).
+            Default 1 → DSR returns NaN (no meaningful correction
+            possible from a single trial).
         ledger_sharpe_variance: Variance of Sharpe across prior
-            trials. Default 0 collapses DSR to PSR.
-        factor_max_similarity_to_zoo: Maximum cosine similarity to
-            the factor zoo. Caller supplies because the engine doesn't
-            own the zoo. Default ``NaN`` — syntactically distinct from
-            "computed and came out zero."
+            trials. Ignored when ``ledger`` is provided. Default 0
+            collapses DSR to PSR.
+        factor_max_similarity_to_zoo: Maximum structural similarity
+            to prior factors. Default NaN ("not computed"). When
+            ``ledger`` is provided and ``skip_duplicate_check=False``,
+            this is auto-populated from the duplicate check's output
+            and any caller-supplied value is ignored.
         initial_cash: Passed to ``simulate_fold``.
         freq: Bar-frequency string passed to vectorbt.
         min_test_bars: Minimum bars required per fold test window.
@@ -180,16 +223,57 @@ def run_backtest(
     Raises:
         LookAheadDetected: If the factor trips Layer 1 or Layer 2.
         ConfigError: On input validation failures.
+        DuplicateFactor: When ``ledger`` is provided,
+            ``skip_duplicate_check=False``, ``on_duplicate="raise"``,
+            and a prior entry clears both similarity thresholds.
+        DuplicateCheckSaturated: When the duplicate check exceeds its
+            hard cap without a verdict. Raised regardless of
+            ``on_duplicate``.
     """
     if signal_rule is None:
         signal_rule = default_signal_rule
 
     _validate_inputs(features=features, prices=prices, regime_labels=regime_labels)
 
-    # --- Causality layers ---
+    # --- Causality layers (always run before any ledger interaction) ---
     _layer_1_causality_check(factor.root)
     compiled = compile_factor(factor)
     _layer_2_causality_check(compiled, features=features, root=factor.root)
+
+    # --- Duplicate detection (if ledger provided and not skipped) ---
+    # Runs AFTER causality checks — a cheating factor never reaches
+    # the ledger even as a read. Runs BEFORE walk-forward simulation
+    # so we fail fast on duplicates without paying the expensive
+    # per-fold sim cost.
+    duplicate_check: DuplicateCheck | None = None
+    if ledger is not None and not skip_duplicate_check:
+        duplicate_check = check_duplicate(
+            candidate=factor,
+            candidate_features=features,
+            ledger=ledger,
+        )
+        if duplicate_check.cap_exceeded:
+            raise DuplicateCheckSaturated(
+                f"Duplicate check exceeded the hard cap while scanning the "
+                f"ledger at {ledger.path}. Verdict is indeterminate. "
+                f"Remedies: prune the ledger, raise hard_cap via a direct "
+                f"check_duplicate call, or pass skip_duplicate_check=True "
+                f"to bypass this check."
+            )
+        if duplicate_check.match is not None:
+            if on_duplicate == "skip":
+                return duplicate_check.match.result
+            # on_duplicate == "raise"
+            matched_entry = duplicate_check.match
+            raise DuplicateFactor(
+                f"Candidate factor duplicates ledger entry "
+                f"{matched_entry.meta['ledger_line_id']} "
+                f"(factor_id={matched_entry.result.factor_id}, "
+                f"structural={duplicate_check.structural_similarity:.3f}, "
+                f"behavioral={duplicate_check.behavioral_similarity:.3f}). "
+                f"Pass on_duplicate='skip' to return the prior result "
+                f"instead of raising."
+            )
 
     # --- Signal pipeline ---
     factor_values = compiled(features)
@@ -235,21 +319,35 @@ def run_backtest(
     # --- Regime breakdown ---
     regime_sharpes = _compute_regime_breakdown(net_returns, regime_labels)
 
+    # --- DSR input resolution: ledger wins when provided ---
+    if ledger is not None:
+        dsr_n_trials = ledger.count_finite_experiments()
+        dsr_sharpe_variance = ledger.sharpe_variance_across_trials()
+    else:
+        dsr_n_trials = ledger_prior_count
+        dsr_sharpe_variance = ledger_sharpe_variance
+
     # --- Deflated Sharpe ---
     dsr = _compute_deflated_sharpe(
         net_returns,
-        n_trials=ledger_prior_count,
-        sharpe_variance=ledger_sharpe_variance,
+        n_trials=dsr_n_trials,
+        sharpe_variance=dsr_sharpe_variance,
     )
 
     # --- Factor properties ---
     complexity = factor_complexity(factor.root)
 
+    # --- factor_max_similarity_to_zoo: ledger-sourced when available ---
+    if duplicate_check is not None:
+        similarity_for_result = duplicate_check.structural_similarity
+    else:
+        similarity_for_result = factor_max_similarity_to_zoo
+
     # --- Data provenance ---
     data_version = _compute_data_version(features, feature_source_names)
 
     # --- Assemble ---
-    return _assemble_result(
+    result = _assemble_result(
         factor=factor,
         data_version=data_version,
         net_returns=net_returns,
@@ -260,11 +358,17 @@ def run_backtest(
         regime_sharpes=regime_sharpes,
         dsr=dsr,
         complexity=complexity,
-        ledger_prior_count=ledger_prior_count,
-        factor_max_similarity_to_zoo=factor_max_similarity_to_zoo,
+        ledger_prior_count=dsr_n_trials,
+        factor_max_similarity_to_zoo=similarity_for_result,
         prices=prices,
         freq=freq,
     )
+
+    # --- Write to ledger on success (novel factor, no cap saturation) ---
+    if ledger is not None:
+        ledger.append(factor=factor, result=result)
+
+    return result
 
 
 # ---------------------------------------------------------------------------

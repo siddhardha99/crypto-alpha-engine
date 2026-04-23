@@ -283,12 +283,28 @@ def _max_int_heuristic(root: FactorNode) -> int:
     Heuristic: for the standard operator library, the largest int is
     the factor's warmup-window proxy (ts_mean(x, 20) has warmup 20;
     ts_zscore(ts_mean(x, 20), 100) has warmup 100). Accurate for
-    every operator in Phase 3-6. Future operators with non-window
-    int args would need a more nuanced proxy; flagged in the module
-    docstring.
+    every operator in Phase 3-6.
+
+    Limitation: the heuristic does **not compose**. A deeply-nested
+    factor like ``ts_mean(ts_mean(x, 20), 30)`` has true effective
+    warmup of 20 + 30 - 1 = 49 bars, but this function returns 30
+    (the max int, not the sum). Callers relying on the heuristic for
+    data-sufficiency sizing buy slack via the 3× multiplier in
+    :func:`check_duplicate`, which covers moderate nesting but can
+    be undersized for pathologically deep factors. Workaround for
+    now: pass a longer feature history. A proper compound-warmup
+    tracker — walking the tree and summing per-operator warmup
+    contributions — is a Phase 8+ addition if nested factors prove
+    common in practice.
 
     Returns 0 if no ints are present (factor has no windowed ops →
     no meaningful warmup).
+
+    Booleans are excluded even though ``isinstance(True, int)`` is
+    True in Python — a common trap when introspecting int args.
+    The broader pattern: ``type(v) is int`` or an explicit
+    ``isinstance(v, int) and not isinstance(v, bool)`` check is
+    required any time int-ness is semantically load-bearing.
     """
     max_int = 0
     for node in walk(root):
