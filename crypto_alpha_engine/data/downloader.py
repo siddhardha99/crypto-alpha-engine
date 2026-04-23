@@ -26,13 +26,11 @@ everything here:
    pass a fake; production uses :func:`make_binance_spot` /
    :func:`make_binance_perp`.
 
-Phase-2 scope
--------------
-This module ships :func:`download_ohlcv` (spot + perp bars) for the BTC/ETH
-universe on ``1h`` and ``1d`` intervals. Funding and OI downloaders have
-the same shape and will be added in a follow-up commit before the end of
-Phase 2. The tests for :func:`download_ohlcv` cover the core invariants
-(resume, dedup, quarantine) that those siblings will reuse verbatim.
+Three downloaders ship here: :func:`download_ohlcv`,
+:func:`download_funding`, and :func:`download_open_interest`. They share
+the publish / validate / quarantine machinery via
+:func:`_validate_then_publish` and only differ in how they page through
+the exchange and how they shape records into a DataFrame.
 """
 
 from __future__ import annotations
@@ -48,7 +46,11 @@ import pandera.pandas as pa
 import structlog
 
 from crypto_alpha_engine.data.loader import OHLCV_FILENAME_TEMPLATE
-from crypto_alpha_engine.data.schemas import OHLCVSchema
+from crypto_alpha_engine.data.schemas import (
+    FundingRateSchema,
+    OHLCVSchema,
+    OpenInterestSchema,
+)
 from crypto_alpha_engine.exceptions import DataSchemaViolation
 
 if TYPE_CHECKING:
@@ -69,7 +71,13 @@ _DEFAULT_LIMIT = 1000  # ccxt's typical per-call max for Binance
 
 
 class _ExchangeProtocol(Protocol):
-    """The subset of ``ccxt.Exchange`` this module needs."""
+    """The subset of ``ccxt.Exchange`` this module needs.
+
+    Each downloader uses a different subset: OHLCV uses
+    :meth:`fetch_ohlcv`; funding uses :meth:`fetch_funding_rate_history`;
+    open interest uses :meth:`fetch_open_interest_history`. All three
+    use :meth:`parse_timeframe`.
+    """
 
     def fetch_ohlcv(
         self,
@@ -78,6 +86,21 @@ class _ExchangeProtocol(Protocol):
         since: int | None = ...,
         limit: int | None = ...,
     ) -> list[list[float]]: ...
+
+    def fetch_funding_rate_history(
+        self,
+        symbol: str,
+        since: int | None = ...,
+        limit: int | None = ...,
+    ) -> list[dict[str, Any]]: ...
+
+    def fetch_open_interest_history(
+        self,
+        symbol: str,
+        timeframe: str,
+        since: int | None = ...,
+        limit: int | None = ...,
+    ) -> list[dict[str, Any]]: ...
 
     def parse_timeframe(self, timeframe: str) -> int: ...
 
@@ -268,9 +291,7 @@ def _fetch_paginated(
 
 def _bars_to_df(bars: list[list[float]]) -> pd.DataFrame:
     if not bars:
-        return pd.DataFrame(
-            columns=["timestamp", "open", "high", "low", "close", "volume"]
-        )
+        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
     df = pd.DataFrame(
         bars,
         columns=["timestamp", "open", "high", "low", "close", "volume"],
@@ -291,8 +312,7 @@ def _concat_dedup(existing: pd.DataFrame | None, new: pd.DataFrame) -> pd.DataFr
     else:
         combined = pd.concat([existing, new], ignore_index=True)
     combined = combined.drop_duplicates(subset="timestamp", keep="first")
-    combined = combined.sort_values("timestamp", ignore_index=True)
-    return combined
+    return combined.sort_values("timestamp", ignore_index=True)
 
 
 def _validate_then_publish(
@@ -397,11 +417,280 @@ def make_binance_spot() -> _ExchangeProtocol:
 def make_binance_perp() -> _ExchangeProtocol:
     """Return a ccxt Binance USDⓈ-M futures client.
 
-    Used by the funding and open-interest downloaders (next commit in
-    Phase 2). Funding data and OI live on the perp markets, not spot.
+    Used by :func:`download_funding` and :func:`download_open_interest`
+    — funding data and OI live on the perp markets, not spot.
     """
     import ccxt  # noqa: PLC0415
 
     logging.getLogger("ccxt").setLevel(logging.WARNING)
     exchange: Any = ccxt.binanceusdm({"enableRateLimit": True})
     return exchange  # type: ignore[no-any-return]
+
+
+# ---------------------------------------------------------------------------
+# download_funding
+# ---------------------------------------------------------------------------
+
+_FUNDING_INTERVAL_MS = 8 * 3_600_000  # Binance perp funding settles every 8h
+
+
+def download_funding(
+    symbol: str,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp | None = None,
+    data_dir: Path,
+    exchange: _ExchangeProtocol,
+    limit: int = _DEFAULT_LIMIT,
+) -> Path | None:
+    """Idempotently fetch the perp funding-rate history for ``symbol``.
+
+    Funding rates settle every 8h on Binance USDⓈ-M. Same invariants as
+    :func:`download_ohlcv`: existing file → resume from max(timestamp)
+    + 8h; validate before publish; failures go to
+    ``<data_dir>/quarantine/``.
+
+    Args:
+        symbol: Perpetual symbol string (ccxt form, e.g.
+            ``"BTC/USDT:USDT"``). The parquet filename uses only
+            ``BASE_QUOTE`` to match the loader's convention.
+        start: Earliest UTC-aware timestamp to fetch on a fresh run.
+        end: Optional exclusive upper bound (UTC-aware).
+        data_dir: Root data directory.
+        exchange: Perp-market exchange (use :func:`make_binance_perp`).
+        limit: Maximum records per exchange call.
+
+    Returns:
+        Path to the canonical parquet, or ``None`` if the exchange
+        returned nothing and no file existed previously.
+
+    Raises:
+        DataSchemaViolation: Combined frame fails
+            :class:`FundingRateSchema`.
+    """
+    _require_utc(start, "start")
+    if end is not None:
+        _require_utc(end, "end")
+
+    base, quote_full = symbol.split("/", 1)
+    quote = quote_full.split(":", 1)[0]
+    final_path = data_dir / "binance" / "funding" / f"{base}_{quote}.parquet"
+
+    existing = _read_existing_or_none(final_path)
+    since_ms = _resume_from_existing_or_start(existing, start, _FUNDING_INTERVAL_MS)
+    end_ms = _timestamp_to_ms(end) if end is not None else None
+
+    if existing is not None and end_ms is not None and since_ms >= end_ms:
+        _logger.info("funding_up_to_date", symbol=symbol, rows=len(existing))
+        return final_path
+
+    records = _fetch_funding_paginated(
+        exchange=exchange,
+        symbol=symbol,
+        since_ms=since_ms,
+        end_ms=end_ms,
+        limit=limit,
+    )
+    if not records and existing is None:
+        _logger.info("funding_empty_response", symbol=symbol)
+        return None
+
+    new_df = _funding_records_to_df(records)
+    combined = _concat_dedup(existing, new_df)
+
+    _validate_then_publish(
+        df=combined,
+        final_path=final_path,
+        data_dir=data_dir,
+        schema=FundingRateSchema,
+    )
+    _logger.info(
+        "funding_download_complete",
+        symbol=symbol,
+        new_rows=len(new_df),
+        total_rows=len(combined),
+        path=str(final_path),
+    )
+    return final_path
+
+
+def _fetch_funding_paginated(
+    *,
+    exchange: _ExchangeProtocol,
+    symbol: str,
+    since_ms: int,
+    end_ms: int | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    cursor = since_ms
+    for _ in range(_MAX_PAGES):
+        page = exchange.fetch_funding_rate_history(symbol, since=cursor, limit=limit)
+        if not page:
+            break
+        if end_ms is not None:
+            page = [r for r in page if int(r["timestamp"]) < end_ms]
+        if not page:
+            break
+        out.extend(page)
+        if len(page) < limit:
+            break
+        cursor = int(page[-1]["timestamp"]) + 1
+        if end_ms is not None and cursor >= end_ms:
+            break
+    return out
+
+
+def _funding_records_to_df(records: list[dict[str, Any]]) -> pd.DataFrame:
+    if not records:
+        return pd.DataFrame(columns=["timestamp", "funding_rate"])
+    return pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                [int(r["timestamp"]) for r in records], unit="ms", utc=True
+            ).astype("datetime64[us, UTC]"),
+            "funding_rate": [float(r["fundingRate"]) for r in records],
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# download_open_interest
+# ---------------------------------------------------------------------------
+
+
+def download_open_interest(
+    symbol: str,
+    interval: str,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp | None = None,
+    data_dir: Path,
+    exchange: _ExchangeProtocol,
+    limit: int = _DEFAULT_LIMIT,
+) -> Path | None:
+    """Idempotently fetch perp open-interest history for ``symbol``.
+
+    Args:
+        symbol: Perpetual symbol string (``"BTC/USDT:USDT"``).
+        interval: Bar interval for the OI series (``"1h"`` in Phase 2).
+        start, end, data_dir, exchange, limit: See :func:`download_funding`.
+
+    Returns:
+        Path to the canonical parquet, or ``None`` on empty-response +
+        no-existing-file.
+
+    Raises:
+        DataSchemaViolation: Combined frame fails
+            :class:`OpenInterestSchema`.
+    """
+    _require_utc(start, "start")
+    if end is not None:
+        _require_utc(end, "end")
+
+    base, quote_full = symbol.split("/", 1)
+    quote = quote_full.split(":", 1)[0]
+    final_path = data_dir / "binance" / "open_interest" / f"{base}_{quote}.parquet"
+
+    existing = _read_existing_or_none(final_path)
+    interval_ms = exchange.parse_timeframe(interval) * 1000
+    since_ms = _resume_from_existing_or_start(existing, start, interval_ms)
+    end_ms = _timestamp_to_ms(end) if end is not None else None
+
+    if existing is not None and end_ms is not None and since_ms >= end_ms:
+        _logger.info("oi_up_to_date", symbol=symbol, rows=len(existing))
+        return final_path
+
+    records = _fetch_oi_paginated(
+        exchange=exchange,
+        symbol=symbol,
+        timeframe=interval,
+        since_ms=since_ms,
+        end_ms=end_ms,
+        limit=limit,
+    )
+    if not records and existing is None:
+        _logger.info("oi_empty_response", symbol=symbol)
+        return None
+
+    new_df = _oi_records_to_df(records)
+    combined = _concat_dedup(existing, new_df)
+
+    _validate_then_publish(
+        df=combined,
+        final_path=final_path,
+        data_dir=data_dir,
+        schema=OpenInterestSchema,
+    )
+    _logger.info(
+        "oi_download_complete",
+        symbol=symbol,
+        interval=interval,
+        new_rows=len(new_df),
+        total_rows=len(combined),
+        path=str(final_path),
+    )
+    return final_path
+
+
+def _fetch_oi_paginated(
+    *,
+    exchange: _ExchangeProtocol,
+    symbol: str,
+    timeframe: str,
+    since_ms: int,
+    end_ms: int | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    cursor = since_ms
+    for _ in range(_MAX_PAGES):
+        page = exchange.fetch_open_interest_history(symbol, timeframe, since=cursor, limit=limit)
+        if not page:
+            break
+        if end_ms is not None:
+            page = [r for r in page if int(r["timestamp"]) < end_ms]
+        if not page:
+            break
+        out.extend(page)
+        if len(page) < limit:
+            break
+        cursor = int(page[-1]["timestamp"]) + 1
+        if end_ms is not None and cursor >= end_ms:
+            break
+    return out
+
+
+def _oi_records_to_df(records: list[dict[str, Any]]) -> pd.DataFrame:
+    if not records:
+        return pd.DataFrame(columns=["timestamp", "open_interest"])
+    return pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                [int(r["timestamp"]) for r in records], unit="ms", utc=True
+            ).astype("datetime64[us, UTC]"),
+            "open_interest": [float(r["openInterestAmount"]) for r in records],
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shared resume helper
+# ---------------------------------------------------------------------------
+
+
+def _resume_from_existing_or_start(
+    existing: pd.DataFrame | None,
+    start: pd.Timestamp,
+    interval_ms: int,
+) -> int:
+    """Resume strictly after the last existing row, else use ``start``.
+
+    Shared by :func:`download_funding` and :func:`download_open_interest`;
+    :func:`download_ohlcv` uses its own :func:`_resume_since_ms` which
+    takes the exchange directly to parse the timeframe.
+    """
+    if existing is None or existing.empty:
+        return _timestamp_to_ms(start)
+    last_ms = int(existing["timestamp"].max().timestamp() * 1000)
+    return last_ms + interval_ms

@@ -90,8 +90,7 @@ class DataSplits:
             )
         if self.validation_end.tzinfo is None:
             raise ConfigError(
-                "DataSplits.validation_end must be UTC-aware; got naive "
-                f"{self.validation_end!r}"
+                "DataSplits.validation_end must be UTC-aware; got naive " f"{self.validation_end!r}"
             )
         if self.validation_end <= self.train_end:
             raise ConfigError(
@@ -123,9 +122,7 @@ def split_train(df: pd.DataFrame, *, splits: DataSplits = DEFAULT_SPLITS) -> pd.
     return _slice_range(df, upper_exclusive=splits.train_end)
 
 
-def split_validation(
-    df: pd.DataFrame, *, splits: DataSplits = DEFAULT_SPLITS
-) -> pd.DataFrame:
+def split_validation(df: pd.DataFrame, *, splits: DataSplits = DEFAULT_SPLITS) -> pd.DataFrame:
     """Return the validation-zone rows: ``[train_end, validation_end)``."""
     return _slice_range(
         df,
@@ -208,9 +205,7 @@ def _slice_range(
     Either bound may be omitted to leave that side unbounded.
     """
     if _TIMESTAMP_COL not in df.columns:
-        raise KeyError(
-            f"expected a '{_TIMESTAMP_COL}' column; got {list(df.columns)!r}"
-        )
+        raise KeyError(f"expected a '{_TIMESTAMP_COL}' column; got {list(df.columns)!r}")
     ts = df[_TIMESTAMP_COL]
     mask: pd.Series = pd.Series(True, index=df.index)
     if lower_inclusive is not None:

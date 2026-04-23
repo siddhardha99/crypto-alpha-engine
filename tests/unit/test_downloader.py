@@ -24,11 +24,15 @@ import pytest
 
 from crypto_alpha_engine.data.downloader import (
     QUARANTINE_DIR_NAME,
+    download_funding,
     download_ohlcv,
+    download_open_interest,
 )
 from crypto_alpha_engine.data.loader import (
     OHLCV_FILENAME_TEMPLATE,
+    load_funding,
     load_ohlcv,
+    load_open_interest,
 )
 from crypto_alpha_engine.exceptions import DataSchemaViolation
 
@@ -38,22 +42,34 @@ from crypto_alpha_engine.exceptions import DataSchemaViolation
 
 
 class FakeExchange:
-    """Stand-in for ``ccxt.binance()`` for tests.
+    """Stand-in for ``ccxt.binance()`` / ``ccxt.binanceusdm()`` for tests.
+
+    Supports the three ccxt methods the downloader uses: ``fetch_ohlcv``,
+    ``fetch_funding_rate_history``, ``fetch_open_interest_history``. Each
+    method's served payload is configured via the constructor; every call
+    is logged to the ``calls`` list so tests can assert call counts and
+    ``since`` arguments.
 
     Attributes:
-        bars: Full list of [ts_ms, open, high, low, close, volume] to serve.
-        calls: Every ``fetch_ohlcv`` call is appended here so tests can
-            assert on call count and arguments.
-        fail_mode: If ``"corrupt"``, returned bars have a negative volume so
-            downstream schema validation fails.
+        bars: Full list of [ts_ms, open, high, low, close, volume] to
+            return from ``fetch_ohlcv``.
+        funding_records: List of funding dicts (``{"timestamp", "fundingRate"}``).
+        oi_records: List of OI dicts (``{"timestamp", "openInterestAmount"}``).
+        calls: Every method call is appended here as a dict.
+        fail_mode: ``"corrupt"`` makes ``fetch_ohlcv`` return bars with
+            negative volume so validation fails.
     """
 
     def __init__(
         self,
         bars: list[list[float]] | None = None,
+        funding_records: list[dict[str, Any]] | None = None,
+        oi_records: list[dict[str, Any]] | None = None,
         fail_mode: str | None = None,
     ) -> None:
         self.bars = list(bars) if bars is not None else []
+        self.funding_records = list(funding_records) if funding_records is not None else []
+        self.oi_records = list(oi_records) if oi_records is not None else []
         self.calls: list[dict[str, Any]] = []
         self.fail_mode = fail_mode
 
@@ -66,6 +82,7 @@ class FakeExchange:
     ) -> list[list[float]]:
         self.calls.append(
             {
+                "method": "fetch_ohlcv",
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "since": since,
@@ -79,10 +96,52 @@ class FakeExchange:
             bars = [[b[0], b[1], b[2], b[3], b[4], -1.0] for b in bars]  # negative volume
         return bars
 
+    def fetch_funding_rate_history(
+        self,
+        symbol: str,
+        since: int | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        self.calls.append(
+            {
+                "method": "fetch_funding_rate_history",
+                "symbol": symbol,
+                "since": since,
+                "limit": limit,
+            }
+        )
+        records = [r for r in self.funding_records if since is None or int(r["timestamp"]) >= since]
+        if limit is not None:
+            records = records[:limit]
+        return records
+
+    def fetch_open_interest_history(
+        self,
+        symbol: str,
+        timeframe: str,
+        since: int | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        self.calls.append(
+            {
+                "method": "fetch_open_interest_history",
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "since": since,
+                "limit": limit,
+            }
+        )
+        records = [r for r in self.oi_records if since is None or int(r["timestamp"]) >= since]
+        if limit is not None:
+            records = records[:limit]
+        return records
+
     def parse_timeframe(self, timeframe: str) -> int:
         """Return the timeframe in seconds, mirroring ccxt's helper."""
         if timeframe == "1h":
             return 3600
+        if timeframe == "8h":
+            return 8 * 3600
         if timeframe == "1d":
             return 86400
         raise ValueError(f"FakeExchange: unsupported timeframe {timeframe!r}")
@@ -272,3 +331,112 @@ class TestQuarantine:
         # Sidecar content references the schema failure.
         sidecar_text = errors[0].read_text().lower()
         assert "volume" in sidecar_text or "schema" in sidecar_text
+
+
+# ---------------------------------------------------------------------------
+# Funding
+# ---------------------------------------------------------------------------
+
+
+def _funding_records(
+    start_ms: int, count: int, step_ms: int = 8 * 3_600_000
+) -> list[dict[str, Any]]:
+    return [
+        {"timestamp": start_ms + i * step_ms, "fundingRate": 0.0001 + i * 1e-5}
+        for i in range(count)
+    ]
+
+
+class TestDownloadFunding:
+    def test_fresh_download_writes_validated_parquet(self, tmp_path: Path) -> None:
+        ex = FakeExchange(funding_records=_funding_records(_REF_MS, 6))
+        out = download_funding(
+            "BTC/USDT:USDT",
+            start=pd.Timestamp("2023-06-01", tz="UTC"),
+            end=pd.Timestamp("2023-06-03", tz="UTC"),
+            data_dir=tmp_path,
+            exchange=ex,
+        )
+        assert out is not None
+        df = load_funding("BTC/USDT", data_dir=tmp_path)
+        assert len(df) == 6
+        assert df["funding_rate"].tolist() == [0.0001 + i * 1e-5 for i in range(6)]
+
+    def test_resume_skips_existing_rows(self, tmp_path: Path) -> None:
+        ex_seed = FakeExchange(funding_records=_funding_records(_REF_MS, 3))
+        download_funding(
+            "BTC/USDT:USDT",
+            start=pd.Timestamp("2023-06-01", tz="UTC"),
+            end=pd.Timestamp("2023-06-02", tz="UTC"),
+            data_dir=tmp_path,
+            exchange=ex_seed,
+        )
+
+        ex_extend = FakeExchange(funding_records=_funding_records(_REF_MS, 6))
+        download_funding(
+            "BTC/USDT:USDT",
+            start=pd.Timestamp("2023-06-01", tz="UTC"),
+            end=pd.Timestamp("2023-06-03", tz="UTC"),
+            data_dir=tmp_path,
+            exchange=ex_extend,
+        )
+
+        df = load_funding("BTC/USDT", data_dir=tmp_path)
+        assert len(df) == 6
+        assert df["timestamp"].is_unique
+        # First extend call must have resumed strictly after the third record.
+        first_call = ex_extend.calls[0]
+        assert first_call["since"] > _REF_MS + 2 * (8 * 3_600_000)
+
+
+# ---------------------------------------------------------------------------
+# Open interest
+# ---------------------------------------------------------------------------
+
+
+def _oi_records(start_ms: int, count: int) -> list[dict[str, Any]]:
+    return [
+        {"timestamp": start_ms + i * _HOUR_MS, "openInterestAmount": 1000.0 + i}
+        for i in range(count)
+    ]
+
+
+class TestDownloadOpenInterest:
+    def test_fresh_download_writes_validated_parquet(self, tmp_path: Path) -> None:
+        ex = FakeExchange(oi_records=_oi_records(_REF_MS, 5))
+        out = download_open_interest(
+            "BTC/USDT:USDT",
+            "1h",
+            start=pd.Timestamp("2023-06-01", tz="UTC"),
+            end=pd.Timestamp("2023-06-01 05:00", tz="UTC"),
+            data_dir=tmp_path,
+            exchange=ex,
+        )
+        assert out is not None
+        df = load_open_interest("BTC/USDT", data_dir=tmp_path)
+        assert len(df) == 5
+        assert df["open_interest"].tolist() == [1000.0 + i for i in range(5)]
+
+    def test_already_up_to_date_skips_exchange(self, tmp_path: Path) -> None:
+        ex_seed = FakeExchange(oi_records=_oi_records(_REF_MS, 5))
+        download_open_interest(
+            "BTC/USDT:USDT",
+            "1h",
+            start=pd.Timestamp("2023-06-01", tz="UTC"),
+            end=pd.Timestamp("2023-06-01 05:00", tz="UTC"),
+            data_dir=tmp_path,
+            exchange=ex_seed,
+        )
+
+        ex_again = FakeExchange(oi_records=_oi_records(_REF_MS, 5))
+        download_open_interest(
+            "BTC/USDT:USDT",
+            "1h",
+            start=pd.Timestamp("2023-06-01", tz="UTC"),
+            end=pd.Timestamp("2023-06-01 05:00", tz="UTC"),
+            data_dir=tmp_path,
+            exchange=ex_again,
+        )
+        # parse_timeframe may be called, but no fetch_open_interest_history.
+        fetch_calls = [c for c in ex_again.calls if c["method"] == "fetch_open_interest_history"]
+        assert fetch_calls == []

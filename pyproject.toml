@@ -45,11 +45,13 @@ dev = [
     "black>=24.3",
     "mkdocs>=1.5",
     "mkdocs-material>=9.5",
-    # pandas-stubs is needed for mypy --strict (SPEC §15) to type-check any
-    # module that imports pandas. Not listed in SPEC §19 because SPEC's dev
-    # list predates the strict-mypy-on-pandas-code reality; added here as a
-    # dev-only type-stubs dep with no runtime impact.
+    # Type stubs needed for mypy --strict (SPEC §15). pandas-stubs and
+    # types-requests cover the two third-party libraries the data layer
+    # leans on heavily; without them, mypy --strict rejects every module
+    # that imports them. Not listed in SPEC §19 because SPEC's dev list
+    # predates the strict-mypy reality. Dev-only, no runtime impact.
     "pandas-stubs>=2.2",
+    "types-requests>=2.31",
 ]
 
 [tool.hatch.build.targets.wheel]

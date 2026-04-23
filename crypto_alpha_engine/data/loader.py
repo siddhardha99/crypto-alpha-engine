@@ -137,9 +137,7 @@ def _read_validated_parquet(path: Path, schema: type[pa.DataFrameModel]) -> pd.D
     try:
         schema.validate(df, lazy=False)
     except (pa.errors.SchemaError, pa.errors.SchemaErrors) as err:
-        raise DataSchemaViolation(
-            f"{path.name} failed {schema.__name__}: {err}"
-        ) from err
+        raise DataSchemaViolation(f"{path.name} failed {schema.__name__}: {err}") from err
     return df
 
 
