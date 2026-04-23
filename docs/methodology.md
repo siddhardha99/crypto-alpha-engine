@@ -11,6 +11,8 @@ one.
 - [Extensibility: sources as plugins](#extensibility-sources-as-plugins)
 - [The AST vocabulary layer: when to add a "crypto" operator](#the-ast-vocabulary-layer-when-to-add-a-crypto-operator)
 - [What's deliberately not built-in](#whats-deliberately-not-built-in)
+- [Paper-example tests: external validation over self-consistency](#paper-example-tests-external-validation-over-self-consistency)
+- [Why two causality layers](#why-two-causality-layers)
 
 *(More sections will land as later phases are implemented.)*
 
@@ -170,3 +172,88 @@ This is the shape of decision the Protocol was designed to support:
 applies to any future feature that would require a commercial
 subscription — including dedicated sentiment APIs, proprietary
 orderbook feeds, and licensed tick data.
+
+## Paper-example tests: external validation over self-consistency
+
+For any formula taken from a published paper, the test suite must
+include a **paper-example test** that compares our implementation's
+output against the paper's own worked numbers, to within ~1%
+tolerance. This rule distinguishes two separate claims:
+
+- *Self-consistency.* Our code matches our own arithmetic. A
+  hand-walkthrough test computes the formula in the test file and
+  asserts the implementation matches. If we transcribed the formula
+  wrong from the paper, both the test and the implementation share
+  the error — the test passes, and we've shipped a bug that looks
+  correct.
+- *External correctness.* Our code matches the paper's published
+  output. This requires numbers the paper prints — either in a
+  worked example, a table of values, or a figure with axis-readable
+  points. Matching those numbers proves the transcription is right.
+
+The canonical instance is `deflated_sharpe.py` against Bailey & Lopez
+de Prado (2014). The hand-walkthrough test pinned that our DSR matches
+our own arithmetic; the paper-example test (which collapses DSR to
+PSR by setting `sharpe_variance_across_trials=0`, then plugs in
+Section IV's worked example of n=24, sr=0.459, γ₃=-2.448, γ₄=13.164
+and asserts the output matches the paper's 0.9051 to ±0.01) pinned
+that we transcribed BLP 2014 correctly. The two tests catch
+different bug classes and both are load-bearing.
+
+If the paper doesn't publish worked numbers at all, state that
+explicitly in the test docstring and fall back to the strongest
+independent check available (e.g., compute the same formula from a
+second reference's formulation and compare). Silence on this point
+lets transcription errors ship.
+
+## Why two causality layers
+
+`crypto_alpha_engine/backtest/engine.py` runs two independent
+causality checks on every factor that enters the engine. They catch
+different bug classes, which is why we keep both:
+
+**Layer 1 — AST whitelist.** Every operator registered via
+`@register_operator(..., causal_safe=...)` carries a declarative flag
+describing whether it respects causality (output at time `t` depends
+only on inputs at times `≤ t`). Layer 1 walks the factor AST pre-order
+and rejects any factor referencing an operator with `causal_safe=False`.
+Static, cheap, runs before any compilation or simulation. Its primary
+job is to catch **intentional misregistration** — an operator that
+was honestly labeled as acausal by its author reaching a production
+backtest by accident.
+
+**Layer 2 — runtime perturbation.** After compilation, the engine
+runs the factor at several random cutoffs, perturbs the feature
+values at indices ≥ cutoff, and asserts the factor's output at
+indices < cutoff is byte-identical to the baseline. If future data
+can change past output, the factor is not causal. The test is
+behavioral, not declarative: it ignores the `causal_safe` flag and
+checks the ground truth.
+
+The justification for Layer 2 is the class of bugs Layer 1 cannot
+see:
+
+- **Lying annotations.** An operator kernel does `x.shift(-1)` but
+  its `@register_operator` call says `causal_safe=True`. Layer 1's
+  whitelist reads the declaration and waves it through. Layer 2's
+  perturbation catches the lie.
+- **Mistaken annotations.** An operator author writes
+  `x.rolling(n, center=True).mean()` — a centered window that peeks
+  ahead symmetrically — and genuinely believes it's causal because
+  no `.shift(-N)` appears in the code. Layer 1 trusts them. Layer 2
+  doesn't.
+- **Composition errors.** Two individually-causal operators combine
+  in a way that leaks future data through their composition — via
+  NaN propagation followed by a fill that consults future values, or
+  through an intermediate reindex that shifts output alignment. No
+  single operator registration can describe this; the leak only
+  exists in the composed factor. Layer 2's behavioral check catches
+  it because the composed factor fails the perturbation test, even
+  though each operator individually would not.
+
+Layer 1 is cheap and catches intentional violations at submission
+time. Layer 2 is more expensive (five extra factor evaluations per
+run) and catches the mistakes, lies, and emergent leaks Layer 1
+can't see. Running both is the practical cost of a non-negotiable
+principle: **causality is sacred, and trust-but-verify is how you
+keep it sacred when the people declaring trust are human.**
