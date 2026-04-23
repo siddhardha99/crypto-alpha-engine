@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "crypto-alpha-engine"
-version = "0.1.0"
+version = "1.0.0"
 description = "Sealed, cheat-proof backtesting engine for crypto quantitative research."
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "MudraLabs" }]
 keywords = ["crypto", "backtesting", "quant", "research", "alpha"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Financial and Insurance Industry",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
