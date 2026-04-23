@@ -78,17 +78,21 @@ class TestTagTrend:
         tail_labels = labels.iloc[-50:].dropna()
         assert (tail_labels == TrendLabel.BEAR.value).mean() > 0.9
 
-    def test_causality_future_does_not_affect_past(self) -> None:
-        """The locked-in regime causality test."""
+    @pytest.mark.parametrize("cutoff", [150, 250, 350])
+    def test_causality_future_does_not_affect_past(self, cutoff: int) -> None:
+        """The locked-in regime causality test.
+
+        Parametrized over three cutoffs to prove the invariant holds at
+        multiple temporal locations — a subtle indexing bug could cheat
+        the check at one cutoff while failing at another.
+        """
         close = _price_series(n=400)
         labels_full = tag_trend(close, sma_window=50, slope_window=10)
 
-        cutoff = 250
         clobbered = close.copy()
         clobbered.iloc[cutoff:] = 9999.0  # absurd future prices
         labels_mod = tag_trend(clobbered, sma_window=50, slope_window=10)
 
-        # Past labels must be identical.
         pd.testing.assert_series_equal(
             labels_full.iloc[:cutoff],
             labels_mod.iloc[:cutoff],
@@ -135,11 +139,11 @@ class TestTagVolatility:
         tail = labels.iloc[-50:].dropna()
         assert (tail == VolatilityLabel.HIGH.value).mean() > 0.8
 
-    def test_causality_future_does_not_affect_past(self) -> None:
+    @pytest.mark.parametrize("cutoff", [100, 200, 300])
+    def test_causality_future_does_not_affect_past(self, cutoff: int) -> None:
         close = _price_series(n=400)
         labels_full = tag_volatility(close, window=30)
 
-        cutoff = 200
         clobbered = close.copy()
         clobbered.iloc[cutoff:] = 9999.0
         labels_mod = tag_volatility(clobbered, window=30)
@@ -181,11 +185,11 @@ class TestTagFunding:
         tail = labels.iloc[-50:].dropna()
         assert (tail == FundingLabel.FEARFUL.value).mean() > 0.9
 
-    def test_causality_future_does_not_affect_past(self) -> None:
+    @pytest.mark.parametrize("cutoff", [100, 200, 275])
+    def test_causality_future_does_not_affect_past(self, cutoff: int) -> None:
         funding = _funding_series(n=300)
         labels_full = tag_funding(funding, avg_window=21)
 
-        cutoff = 200
         clobbered = funding.copy()
         clobbered.iloc[cutoff:] = 9.999  # absurd future funding rates
         labels_mod = tag_funding(clobbered, avg_window=21)

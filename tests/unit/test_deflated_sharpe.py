@@ -132,6 +132,35 @@ class TestReferenceValue:
         """The module's EM constant is pinned to the standard value."""
         assert pytest.approx(0.5772156649, rel=1e-9) == EULER_MASCHERONI
 
+    def test_matches_blp_2014_psr_worked_example(self) -> None:
+        """External validation against Bailey & Lopez de Prado (2014).
+
+        Section IV of the paper gives a PSR (Probabilistic Sharpe Ratio)
+        worked example: n=24 monthly observations, sr=0.459, γ₃=-2.448,
+        excess kurt=10.164 → PSR(0) ≈ 0.9051.
+
+        PSR is DSR's single-trial predecessor — same numerator/denominator
+        structure as DSR but with SR* = 0 instead of the expected-max-SR₀
+        penalty. When we set ``sharpe_variance_across_trials = 0``, our
+        SR₀ term collapses to zero and the full DSR formula reduces to
+        PSR(0). So calling ``deflated_sharpe_ratio`` with V=0 must match
+        the paper's published 0.9051.
+
+        This is the "math is correct" check — independent of our own
+        code paths, comparing output directly to a number Bailey & Lopez
+        de Prado published. Tolerance of 0.01 (≈1%) absorbs their
+        paper-rounding (skew/kurt printed to 3 decimals).
+        """
+        dsr = deflated_sharpe_ratio(
+            observed_sharpe=0.459,
+            n_trials=2,  # any N ≥ 2; V=0 zeroes the multi-testing term
+            returns_skew=-2.448,
+            returns_kurt=13.164,  # paper gives excess=10.164; raw = +3
+            n_observations=24,
+            sharpe_variance_across_trials=0.0,
+        )
+        assert dsr == pytest.approx(0.9051, abs=0.01)
+
 
 # ---------------------------------------------------------------------------
 # Degenerate cases → NaN (documented in docstring)

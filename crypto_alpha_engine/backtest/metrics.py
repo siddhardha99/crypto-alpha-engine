@@ -39,6 +39,17 @@ raising:
 * Zero-volatility series → NaN for Sharpe, Sortino, Calmar
   (division by zero on the std denominator; we treat ``std < 1e-15``
   as zero to absorb pandas' floating-point noise on constant series).
+
+  On the ``1e-15`` choice: this module's input contract is a series
+  of **dimensionless returns** (fractional changes, e.g., ``0.01`` =
+  1%), not PnL in dollars. Realistic crypto daily-return std lives in
+  ``[1e-3, 1e-1]``; a true-zero constant series comes back from pandas
+  at ``~1e-18`` because of floating-point noise. ``1e-15`` sits three
+  orders above the noise and twelve orders below any real data, so a
+  fixed absolute threshold is safe. If this module ever accepted
+  dollar-denominated PnL (it won't — that would violate Principle 1
+  by exposing trade-level amounts), the threshold would have to
+  become relative — e.g., ``eps * |arr.mean()|``.
 * All-positive returns → ``profit_factor`` returns ``float('inf')``;
   Phase 7's JSON ledger serializer needs to handle inf → null/string,
   flagged here as a downstream concern.
