@@ -114,6 +114,7 @@ module = [
     # the noise here rather than scatter # type: ignore throughout the
     # data layer.
     "pyarrow.*",
+    "scipy.*",
 ]
 ignore_missing_imports = true
 

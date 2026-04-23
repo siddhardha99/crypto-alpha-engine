@@ -306,6 +306,12 @@ class BacktestResult:
     out_of_sample_sharpe: float
     deflated_sharpe_ratio: float
     n_experiments_in_ledger: int
+    # TODO(Phase-7): populated from factor_complexity(factor.root)["scalar"]
+    # when the ledger is wired in. Stored alongside the Sharpe family so
+    # reports can relate raw performance to factor simplicity. Deliberately
+    # separate from deflated_sharpe_ratio — they penalise different overfit
+    # mechanisms (multiple-testing vs. single-factor degrees of freedom).
+    complexity_scalar: float
 
     # --- Factor properties ---
     factor_ast_depth: int

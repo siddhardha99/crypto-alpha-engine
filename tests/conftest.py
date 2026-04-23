@@ -64,6 +64,7 @@ def _default_backtest_result_kwargs() -> dict[str, Any]:
         "out_of_sample_sharpe": 1.05,
         "deflated_sharpe_ratio": 0.78,
         "n_experiments_in_ledger": 42,
+        "complexity_scalar": 0.24,
         # Factor properties
         "factor_ast_depth": 4,
         "factor_node_count": 11,
