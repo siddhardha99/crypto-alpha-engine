@@ -14,6 +14,7 @@ Coverage:
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import pytest
 
@@ -22,7 +23,6 @@ from crypto_alpha_engine.statistics.deflated_sharpe import (
     EULER_MASCHERONI,
     deflated_sharpe_ratio,
 )
-
 
 # ---------------------------------------------------------------------------
 # Output range
@@ -63,7 +63,7 @@ class TestMonotonicInNTrials:
     def test_dsr_decreases_as_n_trials_increases(self) -> None:
         """Holding the observed Sharpe and other inputs fixed, more trials
         means more multiple-testing penalty, which means a lower DSR."""
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "observed_sharpe": 1.5,
             "returns_skew": 0.0,
             "returns_kurt": 3.0,
@@ -78,7 +78,7 @@ class TestMonotonicInNTrials:
     def test_dsr_unchanged_when_sr_variance_is_zero(self) -> None:
         """If the variance of Sharpe across trials is zero, the
         multiple-testing penalty collapses: SR₀ = 0 regardless of N."""
-        base_kwargs = {
+        base_kwargs: dict[str, Any] = {
             "observed_sharpe": 1.5,
             "returns_skew": 0.0,
             "returns_kurt": 3.0,
@@ -130,7 +130,7 @@ class TestReferenceValue:
 
     def test_euler_mascheroni_constant_value(self) -> None:
         """The module's EM constant is pinned to the standard value."""
-        assert EULER_MASCHERONI == pytest.approx(0.5772156649, rel=1e-9)
+        assert pytest.approx(0.5772156649, rel=1e-9) == EULER_MASCHERONI
 
 
 # ---------------------------------------------------------------------------

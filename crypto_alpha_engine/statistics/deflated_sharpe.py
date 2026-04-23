@@ -142,9 +142,7 @@ def deflated_sharpe_ratio(
 
     # Non-normality denominator σ²(SR).
     denom_inner = (
-        1.0
-        - returns_skew * observed_sharpe
-        + ((returns_kurt - 1.0) / 4.0) * observed_sharpe**2
+        1.0 - returns_skew * observed_sharpe + ((returns_kurt - 1.0) / 4.0) * observed_sharpe**2
     )
     if denom_inner <= 0:
         # Extreme skew/kurt can drive the denominator negative — the
@@ -169,19 +167,12 @@ def _validate(
     sharpe_variance_across_trials: float,
 ) -> None:
     if not isinstance(n_trials, int) or n_trials < 1:
-        raise ConfigError(
-            f"n_trials must be a positive int, got {n_trials!r}"
-        )
+        raise ConfigError(f"n_trials must be a positive int, got {n_trials!r}")
     if not isinstance(n_observations, int) or n_observations < 2:
+        raise ConfigError(f"n_observations must be an int >= 2, got {n_observations!r}")
+    if sharpe_variance_across_trials < 0 and not math.isnan(sharpe_variance_across_trials):
         raise ConfigError(
-            f"n_observations must be an int >= 2, got {n_observations!r}"
-        )
-    if sharpe_variance_across_trials < 0 and not math.isnan(
-        sharpe_variance_across_trials
-    ):
-        raise ConfigError(
-            f"sharpe_variance_across_trials must be >= 0, "
-            f"got {sharpe_variance_across_trials!r}"
+            f"sharpe_variance_across_trials must be >= 0, " f"got {sharpe_variance_across_trials!r}"
         )
 
 
