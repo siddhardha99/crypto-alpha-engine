@@ -86,14 +86,32 @@ def unique_features(node: FactorNode) -> set[str]:
 def factor_complexity(node: FactorNode) -> dict[str, Any]:
     """Return all complexity metrics and the combined scalar score.
 
-    The returned dict has keys:
+    **Stable contract for downstream consumers** (Phase 5's Deflated
+    Sharpe implementation, the ledger's factor records, external
+    reporting). The returned dict always has exactly these keys, in
+    this order, with these value types:
 
-    * ``"ast_depth"`` — int
-    * ``"node_count"`` — int
-    * ``"unique_operators"`` — int
-    * ``"unique_features"`` — int
-    * ``"scalar"`` — float in ``[0, ∞)``; clamped to ``[0, 1]`` for
-      factors that pass :func:`reject_if_too_complex`.
+    =====================  ======  ==========================================
+    Key                    Type    Meaning
+    =====================  ======  ==========================================
+    ``"ast_depth"``        int     Max nesting depth (leaf = 1)
+    ``"node_count"``       int     Total FactorNode count (primitives excluded)
+    ``"unique_operators"`` int     Number of distinct operator names used
+    ``"unique_features"``  int     Number of distinct feature-name strings
+    ``"scalar"``           float   Combined score in ``[0, ~1]``, used by
+                                   Deflated-Sharpe penalisation
+    =====================  ======  ==========================================
+
+    The key set is part of the engine's public API: Phase 5 may rely
+    on all five being present and typed as documented. Adding a new
+    key is a non-breaking change; renaming or removing one is not.
+
+    Phase 5's Deflated-Sharpe formula should read ``result["scalar"]``;
+    anyone wanting finer breakdowns reads the component keys. There is
+    NO alternative spelling for any key (``"depth"``, ``"nodes"``
+    etc. — deliberately not supported; the explicit ``"ast_depth"``
+    and ``"node_count"`` names disambiguate in Phase 5 code that might
+    also deal with tree depth in a different sense).
     """
     depth = ast_depth(node)
     nodes = node_count(node)

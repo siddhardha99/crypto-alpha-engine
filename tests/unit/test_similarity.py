@@ -126,9 +126,21 @@ class TestBehaviouralSimilarity:
         b = pd.Series([1.0, 2.0, 3.0], index=b_idx)
         assert behavioural_similarity(a, b) == 0.0
 
-    def test_zero_variance_returns_zero(self) -> None:
-        """If one series is constant, Pearson is undefined — clamp to 0."""
+    def test_zero_variance_b_returns_zero(self) -> None:
+        """If the right-hand series is constant, Pearson is undefined → 0."""
         a = _s([1.0, 2.0, 3.0, 4.0, 5.0])
+        b = _s([3.0, 3.0, 3.0, 3.0, 3.0])
+        assert behavioural_similarity(a, b) == 0.0
+
+    def test_zero_variance_a_returns_zero(self) -> None:
+        """Symmetric: a constant on the LEFT side → 0 too."""
+        a = _s([7.0, 7.0, 7.0, 7.0, 7.0])
+        b = _s([1.0, 2.0, 3.0, 4.0, 5.0])
+        assert behavioural_similarity(a, b) == 0.0
+
+    def test_zero_variance_both_sides_returns_zero(self) -> None:
+        """Both constant — correlation is undefined on either axis → 0."""
+        a = _s([7.0, 7.0, 7.0, 7.0, 7.0])
         b = _s([3.0, 3.0, 3.0, 3.0, 3.0])
         assert behavioural_similarity(a, b) == 0.0
 

@@ -216,6 +216,19 @@ class TestArityAndTypes:
         with pytest.raises(ParseError, match="expected 'int'"):
             parse_string('ts_mean("x", True)')
 
+    def test_bool_rejected_at_series_position(self) -> None:
+        """ts_mean(True, 20) is syntactically valid Python but semantically
+        broken: bool isn't a feature-name string or a sub-FactorNode. The
+        arg-type check for 'series' catches it before any kernel call."""
+        with pytest.raises(ParseError, match="expected 'series'"):
+            parse_string("ts_mean(True, 20)")
+
+    def test_bool_rejected_at_series_or_scalar_position(self) -> None:
+        """series_or_scalar also refuses bool — prevents the confusing
+        add("x", True) that pandas would silently accept as 1."""
+        with pytest.raises(ParseError, match="expected 'series_or_scalar'"):
+            parse_string('add("x|close", True)')
+
 
 # ---------------------------------------------------------------------------
 # 4. JSON round-trip
